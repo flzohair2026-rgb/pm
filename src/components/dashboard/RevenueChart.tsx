@@ -1,0 +1,87 @@
+'use client';
+
+import React from 'react';
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer 
+} from 'recharts';
+
+interface RevenueChartProps {
+  data: { date: string; amount: number }[];
+  title?: string;
+  description?: string;
+  language?: 'ar' | 'en';
+}
+
+export const RevenueChart = ({ 
+  data, 
+  title, 
+  description,
+  language = 'ar'
+}: RevenueChartProps) => {
+  const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
+  const resolvedTitle = title ?? t('إيرادات آخر 7 أيام', 'Revenue (last 7 days)');
+  const resolvedDescription = description ?? t('متابعة الأداء المالي اليومي', 'Track daily financial performance');
+  const currencyFormatter = new Intl.NumberFormat(language === 'en' ? 'en-US' : 'ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 0 });
+  return (
+    <div className="bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all h-[340px] sm:h-[400px]">
+      <div className="mb-4 sm:mb-6">
+        <h3 className="font-bold text-base sm:text-lg text-gray-900">{resolvedTitle}</h3>
+        <p className="text-[11px] sm:text-sm text-gray-500">{resolvedDescription}</p>
+      </div>
+      
+      <div className="h-[260px] sm:h-[300px] w-full" dir="ltr">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#10b981" stopOpacity={0.14}/>
+                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+            <XAxis 
+              dataKey="date" 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: '#9ca3af', fontSize: 11 }}
+              dy={10}
+            />
+            <YAxis 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: '#9ca3af', fontSize: 11 }}
+              tickFormatter={(value) => `${value / 1000}k`}
+              dx={-10}
+            />
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: '#fff', 
+                borderRadius: '8px', 
+                border: '1px solid #d1fae5',
+                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' 
+              }}
+              formatter={(value) => {
+                const num = typeof value === 'number' ? value : Number(value || 0);
+                return [currencyFormatter.format(num), t('الإيراد', 'Revenue')];
+              }}
+            />
+            <Area 
+              type="monotone" 
+              dataKey="amount" 
+              stroke="#059669" 
+              strokeWidth={3}
+              fillOpacity={1} 
+              fill="url(#colorAmount)" 
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
