@@ -366,6 +366,39 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
         }
       }
 
+      // Post the invoice as accounts receivable
+      if (invoice && createdInvoice) {
+        try {
+          // Update invoice status to posted
+          const { data: updatedInvoice, error: upError } = await supabase
+            .from('invoices')
+            .update({ status: 'posted', invoice_date: new Date().toISOString() })
+            .eq('id', invoice.id)
+            .select()
+            .single();
+          
+          if (upError) throw upError;
+
+          // Create journal entry for the invoice
+          const { error: txnError } = await supabase.rpc('post_transaction', {
+            p_transaction_type: 'invoice_issue',
+            p_source_type: 'invoice',
+            p_source_id: updatedInvoice.id,
+            p_amount: Number(updatedInvoice.total_amount || 0),
+            p_customer_id: data.customer.id,
+            p_payment_method_id: null,
+            p_transaction_date: today,
+            p_description: `فاتورة مبيعات #${updatedInvoice.invoice_number}`,
+            p_tax_amount: Number(updatedInvoice.tax_amount || 0)
+          });
+          
+          if (txnError) throw txnError;
+        } catch (postErr) {
+          console.error('Failed to post invoice:', postErr);
+          // Don't block booking creation
+        }
+      }
+
       // 3. Create Payment/Journal Entry if deposit > 0
       if (data.depositResult.depositAmount > 0 && data.depositResult.isPaid) {
           const txnDate = today;

@@ -12,6 +12,7 @@ interface DepositStepProps {
   customerName?: string;
   initialData?: DepositResult;
   language?: 'ar' | 'en';
+  unit?: any;
 }
 
 export interface DepositResult {
@@ -29,7 +30,7 @@ interface PaymentMethod {
   name: string;
 }
 
-export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricingResult, customerName, initialData, language: languageProp }) => {
+export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricingResult, customerName, initialData, language: languageProp, unit }) => {
   const { language: storedLanguage } = useAppLanguage();
   const { activeHotelId } = useActiveHotel();
   const language = languageProp ?? storedLanguage;
@@ -93,7 +94,7 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
   const scrollByCards = (dir: 'prev' | 'next') => {
     const el = scrollRef.current;
     if (!el) return;
-    const amount = 260;
+    const amount = 200;
     const delta = dir === 'next' ? amount : -amount;
     el.scrollBy({ left: delta, behavior: 'smooth' });
   };
@@ -137,7 +138,7 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
       }
 
       // Fetch Payment Methods
-      const selectedHotelId = activeHotelId || 'all';
+      const selectedHotelId = unit?.hotel_id || activeHotelId || 'all';
       let query = supabase.from('payment_methods').select('id, name').eq('is_active', true);
       if (selectedHotelId !== 'all') {
         query = query.or(`hotel_id.is.null,hotel_id.eq.${selectedHotelId}`);
@@ -203,59 +204,59 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
 
   const getIcon = (name: string) => {
     const n = name.toLowerCase();
-    if (n.includes('نقد') || n.includes('cash')) return <Banknote size={24} />;
-    if (n.includes('تحويل') || n.includes('transfer') || n.includes('bank') || n.includes('بنك')) return <Landmark size={24} />;
-    if (n.includes('alahli') || n.includes('mada') || n.includes('مدى')) return <CreditCard size={24} />;
-    if (n.includes('booking') || n.includes('agoda') || n.includes('airbnb') || n.includes('expedia') || n.includes('gathern') || n.includes('منصة') || n.includes('platform')) return <Globe size={24} />;
-    return <Wallet size={24} />;
+    if (n.includes('نقد') || n.includes('cash')) return <Banknote size={18} />;
+    if (n.includes('تحويل') || n.includes('transfer') || n.includes('bank') || n.includes('بنك')) return <Landmark size={18} />;
+    if (n.includes('alahli') || n.includes('mada') || n.includes('مدى')) return <CreditCard size={18} />;
+    if (n.includes('booking') || n.includes('agoda') || n.includes('airbnb') || n.includes('expedia') || n.includes('gathern') || n.includes('منصة') || n.includes('platform')) return <Globe size={18} />;
+    return <Wallet size={18} />;
   };
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 space-y-4">
+      <div className="flex flex-col items-center justify-center py-16 space-y-3">
         <div className="relative">
-            <div className="w-16 h-16 border-4 border-emerald-100 rounded-full"></div>
-            <div className="w-16 h-16 border-4 border-t-emerald-700 rounded-full animate-spin absolute top-0 left-0"></div>
+            <div className="w-12 h-12 border-4 border-emerald-100 rounded-full"></div>
+            <div className="w-12 h-12 border-4 border-t-emerald-700 rounded-full animate-spin absolute top-0 left-0"></div>
         </div>
-        <p className="text-sm font-black text-gray-400 animate-pulse">جاري تحميل طرق الدفع...</p>
+        <p className="text-xs font-black text-gray-400 animate-pulse">جاري تحميل طرق الدفع...</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 pb-10">
+    <div className="max-w-3xl mx-auto space-y-4 pb-8">
       
       {/* Main Container */}
-      <div className="bg-white ring-1 ring-emerald-100/70 rounded-3xl overflow-hidden shadow-sm">
+      <div className="bg-white ring-1 ring-emerald-100/70 rounded-2xl overflow-hidden shadow-sm">
         {/* Header */}
-        <div className="bg-gradient-to-br from-emerald-50 via-white to-white px-6 sm:px-8 py-6 border-b border-emerald-100/70 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 rounded-2xl flex items-center justify-center text-white shadow-sm">
-              <Wallet size={24} />
+        <div className="bg-gradient-to-br from-emerald-50 via-white to-white px-5 py-4 border-b border-emerald-100/70 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 rounded-xl flex items-center justify-center text-white shadow-sm">
+              <Wallet size={20} />
             </div>
             <div>
-              <h3 className="font-black text-lg text-emerald-950">تسجيل العربون</h3>
-              <p className="text-[12px] text-emerald-900/70 font-bold mt-0.5">حدد المبلغ وطريقة الدفع والبيان ثم تابع</p>
+              <h3 className="font-black text-sm text-emerald-950">تسجيل العربون</h3>
+              <p className="text-[10px] text-emerald-900/70 font-bold mt-0.5">حدد المبلغ وطريقة الدفع والبيان ثم تابع</p>
             </div>
           </div>
           <div className="flex flex-col items-end">
-            <span className="text-[10px] font-black text-emerald-900/60 tracking-tighter">إجمالي الحجز</span>
-            <span className="text-lg font-black text-emerald-950">{pricingResult.finalTotal.toLocaleString()} <span className="text-xs font-normal">ر.س</span></span>
+            <span className="text-[9px] font-black text-emerald-900/60 tracking-tighter">إجمالي الحجز</span>
+            <span className="text-base font-black text-emerald-950">{pricingResult.finalTotal.toLocaleString()} <span className="text-[10px] font-normal">ر.س</span></span>
           </div>
         </div>
 
-        <div className="p-6 sm:p-8 space-y-8">
+        <div className="p-5 space-y-5">
           
           {/* 1. Deposit Amount Section */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-700">
-                        <Coins size={18} />
+                <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-700">
+                        <Coins size={14} />
                     </div>
                     <h4 className="font-black text-sm text-emerald-950 tracking-tight">قيمة العربون</h4>
                 </div>
-                <div className="flex gap-2 flex-wrap justify-end">
+                <div className="flex gap-1.5 flex-wrap justify-end">
                     {[
                         { label: '0%', val: 0 },
                         { label: '50%', val: Math.round(pricingResult.finalTotal / 2) },
@@ -267,7 +268,7 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                               setDepositAmount(opt.val);
                               setDepositAmountInput(String(opt.val));
                             }}
-                            className={`px-3 py-1.5 rounded-2xl text-[10px] font-black transition-all ${
+                            className={`px-2.5 py-1 rounded-xl text-[9px] font-black transition-all ${
                               depositAmount === opt.val
                                 ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
                                 : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
@@ -288,24 +289,21 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                     value={depositAmountInput}
                     onChange={(e) => onDepositAmountChange(e.target.value)}
                     onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
-                    className="w-full p-5 sm:p-6 bg-white border border-emerald-200 rounded-3xl text-3xl sm:text-4xl font-black text-emerald-800 focus:bg-white focus:border-emerald-600 focus:ring-8 focus:ring-emerald-500/10 outline-none transition-all text-center"
+                    className="w-full p-4 bg-white border border-emerald-200 rounded-2xl text-2xl font-black text-emerald-800 focus:bg-white focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-center"
                 />
-                <div className="absolute inset-y-0 left-6 sm:left-8 flex items-center pointer-events-none">
-                    <span className="text-emerald-900/35 font-black text-xl">ر.س</span>
-                </div>
-                <div className="absolute inset-y-0 right-6 sm:right-8 flex items-center pointer-events-none opacity-0 group-focus-within:opacity-100 transition-opacity">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                    <span className="text-emerald-900/35 font-black text-sm">ر.س</span>
                 </div>
             </div>
           </div>
 
           {/* 2. Payment Methods Section (Horizontal Scroll) */}
           {depositAmount > 0 && (
-            <div className="space-y-6">
-                <div className="flex items-center justify-between px-2">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-700">
-                            <LayoutGrid size={18} />
+            <div className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-700">
+                            <LayoutGrid size={14} />
                         </div>
                         <h4 className="font-black text-sm text-emerald-950 tracking-tight">اختر طريقة الدفع</h4>
                     </div>
@@ -320,7 +318,7 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                         onMouseUp={handleMouseUp}
                         onMouseMove={handleMouseMove}
                         className={`
-                            flex overflow-x-auto pb-4 gap-3 no-scrollbar scroll-smooth px-2 -mx-2 select-none
+                            flex overflow-x-auto pb-3 gap-2.5 no-scrollbar scroll-smooth px-1 -mx-1 select-none
                             ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}
                         `}
                     >
@@ -329,19 +327,19 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                                 key={method.id}
                                 onClick={() => setSelectedMethodId(method.id)}
                                 className={`
-                                    flex-none w-28 p-4 rounded-3xl border transition-all duration-300 flex flex-col items-center gap-2 ring-1 ring-emerald-100/70
+                                    flex-none w-20 p-3 rounded-2xl border transition-all duration-300 flex flex-col items-center gap-1.5 ring-1 ring-emerald-100/70
                                     ${selectedMethodId === method.id 
                                         ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-sm scale-[1.02] z-10 ring-emerald-300/70' 
                                         : 'bg-white text-gray-600 hover:bg-emerald-50/40'
                                     }
                                 `}
                             >
-                                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-300 ${selectedMethodId === method.id ? 'bg-emerald-800 text-white shadow-sm' : 'bg-emerald-50 text-emerald-800'}`}>
-                                    {React.cloneElement(getIcon(method.name) as React.ReactElement<any>, { size: 20 })}
+                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-300 ${selectedMethodId === method.id ? 'bg-emerald-800 text-white shadow-sm' : 'bg-emerald-50 text-emerald-800'}`}>
+                                    {React.cloneElement(getIcon(method.name) as React.ReactElement<any>, { size: 16 })}
                                 </div>
-                                <span className="text-[10px] font-black text-center leading-tight h-6 flex items-center">{method.name}</span>
+                                <span className="text-[9px] font-black text-center leading-tight">{method.name}</span>
                                 {selectedMethodId === method.id && (
-                                    <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></div>
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
                                 )}
                             </button>
                         ))}
@@ -349,61 +347,54 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
 
                     {(canScrollPrev || canScrollNext) && (
                       <>
-                        <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-white via-white/70 to-transparent" />
-                        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white via-white/70 to-transparent" />
+                        <div className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-white via-white/70 to-transparent" />
+                        <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white via-white/70 to-transparent" />
 
                         <button
                           type="button"
                           onClick={() => scrollByCards('prev')}
                           disabled={!canScrollPrev}
-                          className={`absolute left-1 top-1/2 -translate-y-1/2 h-9 w-9 rounded-2xl ring-1 shadow-sm transition-all ${
+                          className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-7 w-7 rounded-xl ring-1 shadow-sm transition-all ${
                             canScrollPrev
                               ? 'bg-white/90 ring-emerald-200/70 text-emerald-900 hover:bg-emerald-50'
                               : 'bg-white/60 ring-emerald-100/60 text-emerald-900/30 cursor-not-allowed'
                           }`}
                           aria-label="تمرير لليسار"
                         >
-                          <ChevronLeft size={18} className="mx-auto" />
+                          <ChevronLeft size={14} className="mx-auto" />
                         </button>
 
                         <button
                           type="button"
                           onClick={() => scrollByCards('next')}
                           disabled={!canScrollNext}
-                          className={`absolute right-1 top-1/2 -translate-y-1/2 h-9 w-9 rounded-2xl ring-1 shadow-sm transition-all ${
+                          className={`absolute right-0.5 top-1/2 -translate-y-1/2 h-7 w-7 rounded-xl ring-1 shadow-sm transition-all ${
                             canScrollNext
                               ? 'bg-white/90 ring-emerald-200/70 text-emerald-900 hover:bg-emerald-50'
                               : 'bg-white/60 ring-emerald-100/60 text-emerald-900/30 cursor-not-allowed'
                           }`}
                           aria-label="تمرير لليمين"
                         >
-                          <ChevronRight size={18} className="mx-auto" />
+                          <ChevronRight size={14} className="mx-auto" />
                         </button>
-
-                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2">
-                          <div className="flex items-center gap-1 rounded-full bg-white/80 ring-1 ring-emerald-100/70 px-2 py-1 text-[10px] font-black text-emerald-900/80">
-                            <span>يوجد المزيد</span>
-                            <ChevronRight size={12} />
-                          </div>
-                        </div>
                       </>
                     )}
                 </div>
 
                 {/* Account Type & Statement Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-                    <div className="space-y-4">
-                        <label className="text-[11px] font-black text-emerald-900/70 px-2">نوع العملية</label>
-                        <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                        <label className="text-[10px] font-black text-emerald-900/70 px-1">نوع العملية</label>
+                        <div className="grid grid-cols-2 gap-1.5">
                             {[
-                                { id: 'advance_payment', label: 'عربون (دفعة مقدمة)', icon: <Wallet size={16} /> },
-                                { id: 'payment', label: 'إيراد (دفعة مباشرة)', icon: <Banknote size={16} /> }
+                                { id: 'advance_payment', label: 'عربون (دفعة مقدمة)', icon: <Wallet size={14} /> },
+                                { id: 'payment', label: 'إيراد (دفعة مباشرة)', icon: <Banknote size={14} /> }
                             ].map((type) => (
                                 <button
                                     key={type.id}
                                     onClick={() => setAccountType(type.id as any)}
                                     className={`
-                                        flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-xs font-black
+                                        flex items-center justify-center gap-1.5 p-2.5 rounded-xl border-2 transition-all text-[10px] font-black
                                         ${accountType === type.id 
                                             ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-sm' 
                                             : 'bg-white/70 border-emerald-100 text-gray-500 hover:border-emerald-200 hover:bg-emerald-50/40'
@@ -417,12 +408,12 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                         </div>
                     </div>
 
-                    <div className="space-y-4">
-                        <label className="text-[11px] font-black text-emerald-900/70 px-2">البيان / الوصف</label>
+                    <div className="space-y-3">
+                        <label className="text-[10px] font-black text-emerald-900/70 px-1">البيان / الوصف</label>
                         <select
                           value={statementPresets.includes(statement) ? statement : ''}
                           onChange={(e) => setStatement(e.target.value)}
-                          className="w-full p-3 bg-white border border-emerald-200 rounded-2xl text-xs font-black text-emerald-950 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-600 outline-none transition-all"
+                          className="w-full p-2.5 bg-white border border-emerald-200 rounded-xl text-[10px] font-black text-emerald-950 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-600 outline-none transition-all"
                         >
                           <option value="">اختر بياناً جاهزاً</option>
                           {statementPresets.map((opt) => (
@@ -436,41 +427,41 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                             value={statement}
                             onChange={(e) => setStatement(e.target.value)}
                             placeholder="أو اكتب بياناً مخصصاً..."
-                            className="w-full p-3 bg-white/70 border border-emerald-200 rounded-2xl text-xs font-black text-emerald-950 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-600 outline-none transition-all"
+                            className="w-full p-2.5 bg-white/70 border border-emerald-200 rounded-xl text-[10px] font-black text-emerald-950 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-600 outline-none transition-all"
                         />
                     </div>
                 </div>
 
                 {/* Reference Number & Receipt Toggle */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-                    <div className="space-y-3">
-                        <label className="text-[11px] font-black text-emerald-900/70 px-2">رقم المرجع / ملاحظات</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black text-emerald-900/70 px-1">رقم المرجع / ملاحظات</label>
                         <div className="relative">
                             <input 
                                 type="text"
                                 value={referenceNumber}
                                 onChange={(e) => setReferenceNumber(e.target.value)}
                                 placeholder={t('رقم الحوالة، آخر 4 أرقام...', 'Reference number...')}
-                                className="w-full p-3 bg-white/70 border border-emerald-200 rounded-2xl text-xs font-black text-emerald-950 focus:bg-white focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-600 outline-none transition-all pr-10"
+                                className="w-full p-2.5 bg-white/70 border border-emerald-200 rounded-xl text-[10px] font-black text-emerald-950 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-600 outline-none transition-all pr-8"
                             />
-                            <div className="absolute inset-y-0 right-4 flex items-center text-gray-300">
-                                <Landmark size={16} />
+                            <div className="absolute inset-y-0 right-3 flex items-center text-gray-300">
+                                <Landmark size={12} />
                             </div>
                         </div>
                     </div>
 
                     <div className="flex flex-col justify-end">
                         <label className={`
-                            flex items-center justify-between p-4 rounded-2xl border-2 transition-all cursor-pointer group
+                            flex items-center justify-between p-3 rounded-xl border-2 transition-all cursor-pointer group
                             ${isPaid ? 'bg-emerald-50 border-emerald-200 shadow-sm' : 'bg-white/70 border-emerald-100 hover:border-emerald-200'}
                         `}>
-                            <div className="flex items-center gap-3">
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isPaid ? 'bg-emerald-800 text-white' : 'bg-emerald-50 text-emerald-800 group-hover:bg-emerald-100'}`}>
-                                    <ShieldCheck size={18} />
+                            <div className="flex items-center gap-2.5">
+                                <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${isPaid ? 'bg-emerald-800 text-white' : 'bg-emerald-50 text-emerald-800 group-hover:bg-emerald-100'}`}>
+                                    <ShieldCheck size={14} />
                                 </div>
                                 <div className="text-right">
-                                    <p className="text-[10px] font-black text-gray-900 leading-none">تأكيد الاستلام</p>
-                                    <p className="text-[8px] font-bold text-emerald-900/55 mt-1">يظهر كمدفوع فوراً</p>
+                                    <p className="text-[9px] font-black text-gray-900 leading-none">تأكيد الاستلام</p>
+                                    <p className="text-[7px] font-bold text-emerald-900/55 mt-0.5">يظهر كمدفوع فوراً</p>
                                 </div>
                             </div>
                             <div className="relative flex items-center">
@@ -480,8 +471,8 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
                                     checked={isPaid}
                                     onChange={(e) => setIsPaid(e.target.checked)}
                                 />
-                                <div className={`w-10 h-5 rounded-full p-1 transition-all duration-300 ${isPaid ? 'bg-emerald-800' : 'bg-emerald-100'}`}>
-                                    <div className={`w-3 h-3 bg-white rounded-full transition-all duration-300 transform ${isPaid ? 'mr-5' : 'mr-0'}`}></div>
+                                <div className={`w-8 h-4 rounded-full p-0.5 transition-all duration-300 ${isPaid ? 'bg-emerald-800' : 'bg-emerald-100'}`}>
+                                    <div className={`w-3 h-3 bg-white rounded-full transition-all duration-300 transform ${isPaid ? 'mr-4' : 'mr-0'}`}></div>
                                 </div>
                             </div>
                         </label>
@@ -491,48 +482,48 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
           )}
 
           {/* 3. Final Summary Card */}
-          <div className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-3xl p-6 sm:p-8 shadow-sm relative overflow-hidden ring-1 ring-emerald-900/20">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-[110px] -mr-32 -mt-32 pointer-events-none"></div>
-            <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/5 rounded-full blur-[90px] -ml-24 -mb-24 pointer-events-none"></div>
+          <div className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl p-4 shadow-sm relative overflow-hidden ring-1 ring-emerald-900/20">
+            <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full blur-[80px] -mr-24 -mt-24 pointer-events-none"></div>
+            <div className="absolute bottom-0 left-0 w-36 h-36 bg-white/5 rounded-full blur-[60px] -ml-18 -mb-18 pointer-events-none"></div>
             
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center border border-white/10 backdrop-blur-md">
-                  <Receipt size={20} className="text-emerald-100" />
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center border border-white/10 backdrop-blur-md">
+                  <Receipt size={16} className="text-emerald-100" />
                 </div>
                 <div>
-                  <h3 className="font-black text-sm text-white">ملخص المستحقات المالية</h3>
-                  <p className="text-[10px] text-white/70 font-bold mt-0.5">يوضح المتبقي بعد خصم العربون</p>
+                  <h3 className="font-black text-xs text-white">ملخص المستحقات المالية</h3>
+                  <p className="text-[9px] text-white/70 font-bold mt-0.5">يوضح المتبقي بعد خصم العربون</p>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-5">
-              <div className="flex justify-between items-center text-xs font-bold group">
+            <div className="space-y-3.5">
+              <div className="flex justify-between items-center text-[10px] font-bold group">
                 <span className="text-white/80 group-hover:text-white transition-colors">إجمالي الفاتورة النهائية</span>
                 <span className="text-white tracking-tight">{pricingResult.finalTotal.toLocaleString()} ر.س</span>
               </div>
               
-              <div className="flex justify-between items-center text-xs font-bold group">
+              <div className="flex justify-between items-center text-[10px] font-bold group">
                 <span className="text-white/80 group-hover:text-white transition-colors">قيمة العربون (المقدم)</span>
                 <span className="text-emerald-100 tracking-tight">-{depositAmount.toLocaleString()} ر.س</span>
               </div>
 
-              <div className="h-px bg-white/5 my-6"></div>
+              <div className="h-px bg-white/5 my-4"></div>
 
               <div className="flex justify-between items-center relative">
-                <div className="space-y-2">
-                  <span className="text-white/75 text-[10px] font-black tracking-[0.2em]">المبلغ المتبقي للتحصيل</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)] animate-pulse"></div>
-                    <span className="text-[10px] text-emerald-100 font-black tracking-tighter">الحالة: متوازن مالياً</span>
+                <div className="space-y-1.5">
+                  <span className="text-white/75 text-[8px] font-black tracking-[0.2em]">المبلغ المتبقي للتحصيل</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] animate-pulse"></div>
+                    <span className="text-[8px] text-emerald-100 font-black tracking-tighter">الحالة: متوازن مالياً</span>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-4xl font-black text-white tracking-tighter leading-none mb-1">
+                  <div className="text-2xl font-black text-white tracking-tighter leading-none mb-0.5">
                     {(pricingResult.finalTotal - depositAmount).toLocaleString()}
                   </div>
-                  <span className="text-[10px] text-white/70 font-black tracking-widest">ريال سعودي</span>
+                  <span className="text-[8px] text-white/70 font-black tracking-widest">ريال سعودي</span>
                 </div>
               </div>
             </div>
@@ -541,21 +532,21 @@ export const DepositStep: React.FC<DepositStepProps> = ({ onNext, onBack, pricin
       </div>
 
       {/* Navigation Actions */}
-      <div className="flex gap-4 pt-4">
+      <div className="flex gap-3 pt-2">
         <button
           onClick={onBack}
-          className="flex-1 bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 py-4 rounded-[1.5rem] font-black text-sm hover:bg-emerald-50 transition-all flex items-center justify-center gap-3 group shadow-sm"
+          className="flex-1 bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 py-3 rounded-2xl font-black text-sm hover:bg-emerald-50 transition-all flex items-center justify-center gap-2 group shadow-sm"
         >
-          <ArrowRight size={20} className="group-hover:-translate-x-1 transition-transform" />
+          <ArrowRight size={16} className="group-hover:-translate-x-1 transition-transform" />
           <span>رجوع</span>
         </button>
         <button
           onClick={handleNext}
           disabled={depositAmount > 0 && isPaid && !selectedMethodId}
-          className="flex-[2] bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white py-4 rounded-[1.5rem] font-black text-sm hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all shadow-sm flex items-center justify-center gap-3 group"
+          className="flex-[2] bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white py-3 rounded-2xl font-black text-sm hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all shadow-sm flex items-center justify-center gap-2 group"
         >
           <span>مراجعة وتأكيد الحجز</span>
-          <CheckCircle2 size={20} className="group-hover:scale-110 transition-transform" />
+          <CheckCircle2 size={16} className="group-hover:scale-110 transition-transform" />
         </button>
       </div>
     </div>

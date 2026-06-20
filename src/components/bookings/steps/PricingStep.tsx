@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UnitType, PriceCalculation } from '@/lib/pricing';
-import { Receipt, Percent, Plus, Trash2, ArrowRight, Calculator, Coins, Edit3, AlertTriangle, Info } from 'lucide-react';
+import { Receipt, Percent, Plus, Trash2, ArrowRight, Calculator, Coins, Edit3, AlertTriangle, Info, ChevronDown, ChevronUp, X, CheckCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppLanguage } from '@/hooks/useAppLanguage';
 
@@ -46,6 +46,9 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
   const [extras, setExtras] = useState<ExtraFee[]>(initialData?.extras || []);
   const [taxRate, setTaxRate] = useState<number>(0.15);
   
+  // Discount section collapsed state
+  const [showDiscounts, setShowDiscounts] = useState(false);
+  
   // Custom Price State
   const [useCustomPrice, setUseCustomPrice] = useState(() => (initialData?.pricingMode ?? 'default') !== 'default');
   const [showCustomPriceTooltip, setShowCustomPriceTooltip] = useState(true);
@@ -74,7 +77,13 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
   const [dailyDaysInput, setDailyDaysInput] = useState(String(calculation.nights || 1));
 
   const [monthlyRateInput, setMonthlyRateInput] = useState('');
-  const [monthlyCountInput, setMonthlyCountInput] = useState('1');
+  const [monthlyCountInput, setMonthlyCountInput] = useState(() => {
+    const months = Math.max(1, Math.round((calculation.nights || 1) / 30));
+    return String(months);
+  });
+
+  // Calculate months from nights for auto-population
+  const calculatedMonths = Math.max(1, Math.round((calculation.nights || 1) / 30));
 
   // New Extra Input State
   const [newExtraName, setNewExtraName] = useState('');
@@ -82,6 +91,14 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
 
   // Info banner state
   const [showCustomPriceInfo, setShowCustomPriceInfo] = useState(true);
+  // Confirmation modal state
+  const [showEjarConfirmModal, setShowEjarConfirmModal] = useState(false);
+  // Track what warning to show
+  const [modalWarningType, setModalWarningType] = useState<'ejar' | 'price' | 'both'>('ejar');
+  // Track if price warning has been confirmed once
+  const [priceWarningConfirmed, setPriceWarningConfirmed] = useState(false);
+  // Shake animation state
+  const [isShaking, setIsShaking] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -144,7 +161,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
   const monthlyCount =
     pricingMode === 'monthly_rate' && monthlyCountInput
       ? parseFloat(monthlyCountInput) || 0
-      : 1;
+      : calculatedMonths;
 
   /**
    * الأولوية:
@@ -219,6 +236,65 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
   };
 
   const handleNext = () => {
+    // Reset confirmation states when opening modal
+    setPriceWarningConfirmed(false);
+    
+    const hasEjarFee = extras.some(extra => extra.name === 'رسوم منصة إيجار');
+    
+    // Check for unreasonable price (with duration consideration)
+    // Adjust thresholds based on booking duration
+    const nights = calculation.nights || 1;
+    let minRatio = 0.7; // 70% lower
+    let maxRatio = 1.3; // 30% higher
+    
+    // For longer bookings, allow more flexibility
+    if (nights >= 60) { // 2+ months
+      minRatio = 0.5;
+      maxRatio = 1.5;
+    } else if (nights >= 30) { // 1+ month
+      minRatio = 0.6;
+      maxRatio = 1.4;
+    } else if (nights >= 14) { // 2+ weeks
+      minRatio = 0.65;
+      maxRatio = 1.35;
+    }
+    
+    const isPriceUnreasonable = useCustomPrice && originalSubtotal > 0 && (
+      (subtotal / originalSubtotal < minRatio) || 
+      (subtotal / originalSubtotal > maxRatio)
+    );
+    
+    // Determine what warnings to show
+    if (!hasEjarFee && isPriceUnreasonable) {
+      setModalWarningType('both');
+      setShowEjarConfirmModal(true);
+    } else if (!hasEjarFee) {
+      setModalWarningType('ejar');
+      setShowEjarConfirmModal(true);
+    } else if (isPriceUnreasonable) {
+      setModalWarningType('price');
+      setShowEjarConfirmModal(true);
+    } else {
+      proceedWithNext();
+    }
+  };
+  
+  const handleModalProceed = () => {
+    const isPriceWarning = modalWarningType === 'price' || modalWarningType === 'both';
+    
+    if (isPriceWarning && !priceWarningConfirmed) {
+      // First click - shake and warn
+      setIsShaking(true);
+      setTimeout(() => setIsShaking(false), 500);
+      setPriceWarningConfirmed(true);
+    } else {
+      // Second click - proceed
+      proceedWithNext();
+    }
+  };
+  
+  const proceedWithNext = () => {
+    setShowEjarConfirmModal(false);
     onNext({
       discountType,
       discountValue,
@@ -262,7 +338,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
       )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         
-        {/* Left Column: Breakdown & Extras */}
+        {/* Left Column: Breakdown & Custom Price & Extras */}
         <div className="lg:col-span-2 space-y-4">
           
           {/* Nightly Breakdown */}
@@ -311,6 +387,201 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
                 </tfoot>
               </table>
             </div>
+          </div>
+
+          {/* Custom Price Section - PROMINENT */}
+          <div className="bg-gradient-to-br from-orange-50/80 to-white border-2 border-orange-200 rounded-xl p-4 shadow-md relative">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                <Edit3 size={20} className="text-orange-600" />
+                سعر مخصص
+              </h3>
+              <div className="relative group">
+                <Info 
+                  size={16} 
+                  className="text-gray-400 cursor-help hover:text-orange-500 transition-colors" 
+                  onMouseEnter={() => setShowCustomPriceTooltip(true)}
+                  onMouseLeave={() => setShowCustomPriceTooltip(false)}
+                />
+                <div className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-[calc(100%+10px)] w-64 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-lg z-50 pointer-events-none transition-opacity duration-300 ${showCustomPriceTooltip ? 'opacity-100' : 'opacity-0'}`}>
+                  يمكنك تحديد سعر مخصص لليلة، أو للشهر، أو للإجمالي على حسب نوع الحجز. سيتم تجاوز السعر الافتراضي للوحدة واعتماد السعر المدخل.
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full border-4 border-transparent border-r-gray-900"></div>
+                </div>
+              </div>
+            </div>
+            
+            <label className="flex items-center gap-3 mb-4 cursor-pointer">
+                <input 
+                    type="checkbox" 
+                    checked={useCustomPrice}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setUseCustomPrice(checked);
+                      if (!checked) {
+                        setPricingMode('default');
+                        return;
+                      }
+                      // Auto-select the most logical pricing mode based on booking length
+                      const nights = calculation.nights || 1;
+                      if (nights >= 25) {
+                        // 25 days or more - use monthly rate
+                        setPricingMode('monthly_rate');
+                      } else if (nights >= 14) {
+                        // 2 weeks or more - use daily rate
+                        setPricingMode('daily_rate');
+                      } else if (bookingType === 'daily') {
+                        // Daily booking - use nightly rate
+                        setPricingMode('custom_nightly');
+                      } else {
+                        // Default to total
+                        setPricingMode('custom_total');
+                      }
+                    }}
+                    className="w-5 h-5 rounded text-orange-600 focus:ring-orange-500"
+                />
+                <span className="text-base font-bold text-gray-900">تفعيل سعر مخصص</span>
+            </label>
+
+            {useCustomPrice && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                    <div className="flex bg-white p-1.5 rounded-lg border border-gray-200 shadow-sm">
+                      <button
+                        onClick={() => setPricingMode('custom_total')}
+                        className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${pricingMode === 'custom_total' ? 'bg-orange-100 text-orange-900 shadow-sm border border-orange-200' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        {t('إجمالي الإقامة', 'Total stay')}
+                      </button>
+                      <button
+                        onClick={() => setPricingMode('custom_nightly')}
+                        className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${pricingMode === 'custom_nightly' ? 'bg-orange-100 text-orange-900 shadow-sm border border-orange-200' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        {t('سعر الليلة', 'Nightly rate')}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPricingMode('daily_rate');
+                          if (dailyDaysInput === '') setDailyDaysInput(String(calculation.nights || 1));
+                        }}
+                        className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${pricingMode === 'daily_rate' ? 'bg-orange-100 text-orange-900 shadow-sm border border-orange-200' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        {t('سعر يومي', 'Daily rate')}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPricingMode('monthly_rate');
+                          if (monthlyCountInput === '') setMonthlyCountInput(String(calculatedMonths));
+                        }}
+                        className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${pricingMode === 'monthly_rate' ? 'bg-orange-100 text-orange-900 shadow-sm border border-orange-200' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        {t('سعر شهري', 'Monthly rate')}
+                      </button>
+                    </div>
+
+                    {pricingMode === 'custom_total' && (
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={customPriceInput}
+                          onChange={(e) => setCustomPriceInput(e.target.value)}
+                          placeholder={originalSubtotal.toString()}
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-lg text-lg font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all"
+                        />
+                        <span className="absolute left-3 top-3.5 text-gray-500 text-sm font-bold">ر.س</span>
+                      </div>
+                    )}
+
+                    {pricingMode === 'custom_nightly' && (
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={nightlyRateInput}
+                          onChange={(e) => setNightlyRateInput(e.target.value)}
+                          placeholder={String(Math.round(originalSubtotal / Math.max(1, calculation.nights || 1)))}
+                          className="w-full px-4 py-3 border-2 border-orange-200 rounded-lg text-lg font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all"
+                        />
+                        <span className="absolute left-3 top-3.5 text-gray-500 text-sm font-bold">ر.س</span>
+                      </div>
+                    )}
+
+                    {pricingMode === 'daily_rate' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="relative">
+                          <input
+                            type="number"
+                            value={dailyRateInput}
+                            onChange={(e) => setDailyRateInput(e.target.value)}
+                            placeholder={String(Math.round(originalSubtotal / Math.max(1, calculation.nights || 1)))}
+                            className="w-full px-4 py-3 border-2 border-orange-200 rounded-lg text-lg font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all"
+                          />
+                          <span className="absolute left-3 top-3.5 text-gray-500 text-sm font-bold">ر.س</span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            value={dailyDaysInput}
+                            onChange={(e) => setDailyDaysInput(e.target.value)}
+                            placeholder={String(calculation.nights || 1)}
+                            className="w-full px-4 py-3 border-2 border-orange-200 rounded-lg text-lg font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all bg-orange-50"
+                          />
+                          <span className="absolute left-3 top-3.5 text-gray-600 text-sm font-bold">{t('يوم', 'days')}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {pricingMode === 'monthly_rate' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="relative">
+                          <input
+                            type="number"
+                            value={monthlyRateInput}
+                            onChange={(e) => setMonthlyRateInput(e.target.value)}
+                            placeholder={String(Math.round(originalSubtotal / Math.max(1, calculatedMonths)))}
+                            className="w-full px-4 py-3 border-2 border-orange-200 rounded-lg text-lg font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all"
+                          />
+                          <span className="absolute left-3 top-3.5 text-gray-500 text-sm font-bold">ر.س</span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            value={monthlyCountInput}
+                            onChange={(e) => setMonthlyCountInput(e.target.value)}
+                            placeholder={String(calculatedMonths)}
+                            className="w-full px-4 py-3 border-2 border-orange-200 rounded-lg text-lg font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all bg-orange-50"
+                          />
+                          <span className="absolute left-3 top-3.5 text-gray-600 text-sm font-bold">{t('شهر', 'months')}</span>
+                        </div>
+                      </div>
+                    )}
+                    {priceWarning && (
+                        <div className="flex items-center gap-2 text-xs text-orange-600 bg-orange-100 px-4 py-2.5 rounded-lg border border-orange-200">
+                            <AlertTriangle size={16} />
+                            <span className="font-bold">{priceWarning}</span>
+                        </div>
+                    )}
+                    {/* Duration mismatch warnings */}
+                    {useCustomPrice && pricingMode === 'daily_rate' && dailyDaysInput && Number(dailyDaysInput) !== calculation.nights && (
+                        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-4 py-2.5 rounded-lg border border-amber-200">
+                            <AlertTriangle size={16} />
+                            <span className="font-bold">تنبيه: عدد الأيام ({dailyDaysInput}) مختلف عن مدة الحجز ({calculation.nights} ليلة)</span>
+                        </div>
+                    )}
+                    {useCustomPrice && pricingMode === 'monthly_rate' && monthlyCountInput && Number(monthlyCountInput) !== calculatedMonths && (
+                        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-4 py-2.5 rounded-lg border border-amber-200">
+                            <AlertTriangle size={16} />
+                            <span className="font-bold">تنبيه: عدد الأشهر ({monthlyCountInput}) مختلف عن المُحتسب من مدة الحجز ({calculatedMonths} شهر)</span>
+                        </div>
+                    )}
+                    {useCustomPrice && pricingMode === 'custom_nightly' && (
+                      <div className="text-sm text-gray-600 bg-white px-3 py-2 rounded-lg border border-gray-200">
+                        {t('الإجمالي حسب عدد الليالي:', 'Total by nights:')}{' '}
+                        <span className="font-bold text-gray-900">{subtotal.toLocaleString()} ر.س</span>
+                      </div>
+                    )}
+                    <div className="text-xs text-gray-500 bg-white px-3 py-2 rounded-lg border border-gray-200">
+                        السعر الأصلي: <span className="font-bold text-gray-700">{originalSubtotal.toLocaleString()} ر.س</span>
+                    </div>
+                </div>
+            )}
           </div>
 
           {/* Extras & Services */}
@@ -377,213 +648,67 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
           </div>
         </div>
 
-        {/* Right Column: Summary & Discounts */}
+        {/* Right Column: Discounts & Summary */}
         <div className="space-y-4">
           
-          {/* Custom Price Section */}
-          <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm relative">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold text-sm text-gray-900 flex items-center gap-2">
-                <Edit3 size={16} className="text-orange-600" />
-                سعر مخصص
-              </h3>
-              <div className="relative group">
-                <Info 
-                  size={16} 
-                  className="text-gray-400 cursor-help hover:text-orange-500 transition-colors" 
-                  onMouseEnter={() => setShowCustomPriceTooltip(true)}
-                  onMouseLeave={() => setShowCustomPriceTooltip(false)}
-                />
-                <div className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-[calc(100%+10px)] w-64 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-lg z-50 pointer-events-none transition-opacity duration-300 ${showCustomPriceTooltip ? 'opacity-100' : 'opacity-0'}`}>
-                  يمكنك تحديد سعر مخصص لليلة، أو للشهر، أو للإجمالي على حسب نوع الحجز. سيتم تجاوز السعر الافتراضي للوحدة واعتماد السعر المدخل.
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full border-4 border-transparent border-r-gray-900"></div>
-                </div>
-              </div>
-            </div>
-            
-            <label className="flex items-center gap-2 mb-3 cursor-pointer">
-                <input 
-                    type="checkbox" 
-                    checked={useCustomPrice}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setUseCustomPrice(checked);
-                      if (!checked) {
-                        setPricingMode('default');
-                        return;
-                      }
-                      setPricingMode(bookingType === 'daily' ? 'custom_nightly' : 'custom_total');
-                    }}
-                    className="rounded text-orange-600 focus:ring-orange-500"
-                />
-                <span className="text-sm text-gray-700">تفعيل سعر مخصص</span>
-            </label>
-
-            {useCustomPrice && (
-                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                    <div className="flex bg-gray-50 p-1 rounded-lg border border-gray-100">
-                      <button
-                        onClick={() => setPricingMode('custom_total')}
-                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${pricingMode === 'custom_total' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        {t('إجمالي الإقامة', 'Total stay')}
-                      </button>
-                      <button
-                        onClick={() => setPricingMode('custom_nightly')}
-                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${pricingMode === 'custom_nightly' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        {t('سعر الليلة', 'Nightly rate')}
-                      </button>
-                      <button
-                        onClick={() => setPricingMode('daily_rate')}
-                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${pricingMode === 'daily_rate' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        {t('سعر يومي', 'Daily rate')}
-                      </button>
-                      <button
-                        onClick={() => setPricingMode('monthly_rate')}
-                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${pricingMode === 'monthly_rate' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        {t('سعر شهري', 'Monthly rate')}
-                      </button>
-                    </div>
-
-                    {pricingMode === 'custom_total' && (
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={customPriceInput}
-                          onChange={(e) => setCustomPriceInput(e.target.value)}
-                          placeholder={originalSubtotal.toString()}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                        />
-                        <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">ر.س</span>
-                      </div>
-                    )}
-
-                    {pricingMode === 'custom_nightly' && (
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={nightlyRateInput}
-                          onChange={(e) => setNightlyRateInput(e.target.value)}
-                          placeholder={String(Math.round(originalSubtotal / Math.max(1, calculation.nights || 1)))}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                        />
-                        <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">ر.س</span>
-                      </div>
-                    )}
-
-                    {pricingMode === 'daily_rate' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="relative">
-                          <input
-                            type="number"
-                            value={dailyRateInput}
-                            onChange={(e) => setDailyRateInput(e.target.value)}
-                            placeholder={String(Math.round(originalSubtotal / Math.max(1, calculation.nights || 1)))}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                          />
-                          <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">ر.س</span>
-                        </div>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            value={dailyDaysInput}
-                            onChange={(e) => setDailyDaysInput(e.target.value)}
-                            placeholder={String(calculation.nights || 1)}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                          />
-                          <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">{t('يوم', 'days')}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {pricingMode === 'monthly_rate' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="relative">
-                          <input
-                            type="number"
-                            value={monthlyRateInput}
-                            onChange={(e) => setMonthlyRateInput(e.target.value)}
-                            placeholder={String(Math.round(originalSubtotal / Math.max(1, Math.round((calculation.nights || 1) / 30))))}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                          />
-                          <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">ر.س</span>
-                        </div>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            value={monthlyCountInput}
-                            onChange={(e) => setMonthlyCountInput(e.target.value)}
-                            placeholder="1"
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                          />
-                          <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">{t('شهر', 'months')}</span>
-                        </div>
-                      </div>
-                    )}
-                    {priceWarning && (
-                        <div className="flex items-center gap-2 text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded-lg border border-orange-100">
-                            <AlertTriangle size={14} />
-                            <span>{priceWarning}</span>
-                        </div>
-                    )}
-                    {useCustomPrice && pricingMode === 'custom_nightly' && (
-                      <div className="text-xs text-gray-500">
-                        {t('الإجمالي حسب عدد الليالي:', 'Total by nights:')}{' '}
-                        <span className="font-medium">{subtotal.toLocaleString()} ر.س</span>
-                      </div>
-                    )}
-                    <div className="text-xs text-gray-500">
-                        السعر الأصلي: <span className="font-medium">{originalSubtotal.toLocaleString()} ر.س</span>
-                    </div>
-                </div>
-            )}
-          </div>
-
-          {/* Discount Section */}
+          {/* Discount Section - COLLAPSIBLE */}
           <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
-            <h3 className="font-bold text-sm text-gray-900 mb-3 flex items-center gap-2">
-              <Percent size={16} className="text-purple-600" />
-              الخصومات
-            </h3>
-            <div className="space-y-3">
-              <div className="flex bg-gray-50 p-1 rounded-lg border border-gray-100">
-                <button
-                  onClick={() => setDiscountType('amount')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${discountType === 'amount' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  مبلغ ثابت
-                </button>
-                <button
-                  onClick={() => setDiscountType('percent')}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${discountType === 'percent' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  نسبة مئوية
-                </button>
-              </div>
-              
-              <div className="relative">
-                <input
-                  type="number"
-                  value={discountValue}
-                  onChange={e => setDiscountValue(Math.max(0, Number(e.target.value)))}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
-                  placeholder="0"
-                />
-                <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">
-                  {discountType === 'amount' ? 'ر.س' : '%'}
-                </span>
-              </div>
-              
-              {discountValue > 0 && (
-                <div className="text-xs text-purple-700 bg-purple-50 px-3 py-2 rounded-lg flex justify-between items-center border border-purple-100">
-                  <span>قيمة الخصم:</span>
-                  <span className="font-bold">-{discountAmount.toLocaleString()} ر.س</span>
+            <button 
+              onClick={() => setShowDiscounts(!showDiscounts)}
+              className="w-full flex items-center justify-between mb-2"
+            >
+              <h3 className="font-bold text-sm text-gray-900 flex items-center gap-2">
+                <Percent size={16} className="text-purple-600" />
+                الخصومات
+              </h3>
+              {showDiscounts ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+            </button>
+            
+            {showDiscounts && (
+              <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                <div className="flex bg-gray-50 p-1 rounded-lg border border-gray-100">
+                  <button
+                    onClick={() => setDiscountType('amount')}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${discountType === 'amount' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    مبلغ ثابت
+                  </button>
+                  <button
+                    onClick={() => setDiscountType('percent')}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${discountType === 'percent' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    نسبة مئوية
+                  </button>
                 </div>
-              )}
-            </div>
+                
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={discountValue}
+                    onChange={e => setDiscountValue(Math.max(0, Number(e.target.value)))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold text-gray-900 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    placeholder="0"
+                  />
+                  <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-medium">
+                    {discountType === 'amount' ? 'ر.س' : '%'}
+                  </span>
+                </div>
+                
+                {discountValue > 0 && (
+                  <div className="text-xs text-purple-700 bg-purple-50 px-3 py-2 rounded-lg flex justify-between items-center border border-purple-100">
+                    <span>قيمة الخصم:</span>
+                    <span className="font-bold">-{discountAmount.toLocaleString()} ر.س</span>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {!showDiscounts && discountValue > 0 && (
+              <div className="text-xs text-purple-700 bg-purple-50 px-3 py-2 rounded-lg flex justify-between items-center border border-purple-100">
+                <span>الخصم المطبق:</span>
+                <span className="font-bold">-{discountAmount.toLocaleString()} ر.س</span>
+              </div>
+            )}
           </div>
 
           {/* Final Summary Card */}
@@ -657,6 +782,146 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
           </div>
         </div>
       </div>
+      
+      {/* Confirmation Modal */}
+      {showEjarConfirmModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-900">تنبيه مهم</h3>
+              <button
+                onClick={() => setShowEjarConfirmModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div className="p-6 space-y-4">
+              {/* Warnings */}
+              <div className="space-y-3">
+                {/* Ejar Fee Warning */}
+                {(modalWarningType === 'ejar' || modalWarningType === 'both') && (
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
+                      <AlertTriangle size={20} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-gray-900">لم يتم إضافة رسوم منصة إيجار</p>
+                      <p className="text-xs text-gray-600">الرسوم المطلوبة: 250 ر.س</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Price Warning */}
+                {(modalWarningType === 'price' || modalWarningType === 'both') && (
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center shrink-0">
+                      <AlertTriangle size={20} className="text-orange-600" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-gray-900">
+                        {subtotal < originalSubtotal ? 'السعر الحالي أقل من السعر الأصلي' : 'السعر الحالي أعلى من السعر الأصلي'}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <div className="text-xs text-gray-600">
+                          <span className="text-gray-500">السعر الأصلي:</span>
+                          <span className="font-bold ml-1">{originalSubtotal.toLocaleString()} ر.س</span>
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          <span className="text-gray-500">السعر الحالي:</span>
+                          <span className={`font-bold ml-1 ${subtotal < originalSubtotal ? 'text-red-600' : 'text-orange-600'}`}>
+                            {subtotal.toLocaleString()} ر.س
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Booking Info Summary */}
+              <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-3 gap-3 text-center border border-gray-100">
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">مدة الحجز</p>
+                  <p className="text-sm font-bold text-gray-900">{calculation.nights} ليلة</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">عدد الأشهر</p>
+                  <p className="text-sm font-bold text-gray-900">{calculatedMonths} شهر</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">الإجمالي الحالي</p>
+                  <p className="text-sm font-bold text-blue-600">{finalTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} ر.س</p>
+                </div>
+              </div>
+              
+              {/* Add Ejar Fee Button */}
+              {(modalWarningType === 'ejar' || modalWarningType === 'both') && (
+                <div className="p-4 bg-gray-50 rounded-xl">
+                  <p className="text-xs text-gray-600 mb-2">أو يمكنك إضافة الرسوم الآن:</p>
+                  <button
+                    onClick={() => {
+                      addEjarFee();
+                      // Check if price is still an issue after adding fee
+                      if (modalWarningType === 'both') {
+                        setModalWarningType('price');
+                      } else {
+                        setShowEjarConfirmModal(false);
+                      }
+                    }}
+                    className="w-full bg-green-50 text-green-700 border border-green-200 py-2.5 rounded-lg text-sm font-bold hover:bg-green-100 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} />
+                    إضافة رسوم منصة إيجار 250 ر.س
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            {/* Actions */}
+            <div className="flex gap-3 p-6 pt-2">
+              <button
+                onClick={() => setShowEjarConfirmModal(false)}
+                className="flex-1 bg-white border border-gray-200 text-gray-700 py-3 rounded-xl font-bold text-sm hover:bg-gray-50 transition-all"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={handleModalProceed}
+                className={`flex-[2] py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                  (modalWarningType === 'price' || modalWarningType === 'both') && priceWarningConfirmed
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : 'bg-amber-600 hover:bg-amber-700 text-white'
+                } ${isShaking ? 'animate-pulse' : ''}`}
+                style={{
+                  animation: isShaking
+                    ? 'shake 0.5s ease-in-out'
+                    : 'none'
+                }}
+              >
+                <CheckCircle size={16} />
+                {(modalWarningType === 'price' || modalWarningType === 'both') && priceWarningConfirmed ? (
+                  <span>نعم، متأكد من السعر</span>
+                ) : (
+                  <span>متأكد، تابع</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Add shake animation styles */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+          20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+      `}} />
     </div>
   );
 };

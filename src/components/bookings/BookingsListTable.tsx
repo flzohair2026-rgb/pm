@@ -192,6 +192,8 @@ export default function BookingsListTable({
         uploaded_at: string | null;
         created_at: string | null;
       };
+      hasEjarUpload: boolean;
+      hasAdditionalServices: boolean;
     }>
   >([]);
   const [pageNum, setPageNum] = React.useState(1);
@@ -202,12 +204,26 @@ export default function BookingsListTable({
   const [arrival, setArrival] = React.useState('');
   const [departure, setDeparture] = React.useState('');
   const [q, setQ] = React.useState('');
+  const [contractStatus, setContractStatus] = React.useState<string>('all');
 
   const nextYmd = (ymd: string) => {
     const [yy, mm, dd] = ymd.split('-').map((x) => Number(x));
     const d = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1));
     d.setUTCDate(d.getUTCDate() + 1);
     return d.toISOString().slice(0, 10);
+  };
+
+  const isBookingActiveNow = (checkInStr: string, checkOutStr: string): boolean => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const checkIn = new Date(checkInStr.split('T')[0]);
+    checkIn.setHours(0, 0, 0, 0);
+
+    const checkOut = new Date(checkOutStr.split('T')[0]);
+    checkOut.setHours(0, 0, 0, 0);
+
+    return today >= checkIn && today <= checkOut;
   };
 
   const load = React.useCallback(async () => {
@@ -256,7 +272,7 @@ export default function BookingsListTable({
         .order('created_at', { ascending: false });
 
       if (selectedHotelId !== 'all') query = query.eq('hotel_id', selectedHotelId);
-      if (status !== 'all') query = query.eq('status', status);
+      if (status !== 'all' && status !== 'active') query = query.eq('status', status);
       if (type !== 'all') query = query.eq('booking_type', type);
       if (arrival) query = query.gte('check_in', arrival).lt('check_in', nextYmd(arrival));
       if (departure) query = query.gte('check_out', departure).lt('check_out', nextYmd(departure));
@@ -272,24 +288,34 @@ export default function BookingsListTable({
       const res = await query.range(fromIndex, toIndex);
       if (res.error) throw res.error;
 
-      const bookings = (res.data || []) as any[];
+      let bookings = (res.data || []) as any[];
+
+      // Filter active bookings if needed
+      if (status === 'active') {
+        bookings = bookings.filter((b) => isBookingActiveNow(b.check_in, b.check_out));
+      }
+
       const bookingIds = bookings.map((b: any) => String(b.id));
       const nextOffset = fromIndex + pageSize;
       setHasNext(typeof res.count === 'number' ? nextOffset < res.count : bookings.length === pageSize);
       setTotalCount(typeof res.count === 'number' ? res.count : null);
 
-      const invoiceSumByBooking = new Map<string, { sum: number; count: number }>();
+      const invoiceSumByBooking = new Map<string, { sum: number; count: number; hasAdditionalServices: boolean }>();
       if (bookingIds.length > 0) {
         const { data: invs } = await supabase
           .from('invoices')
-          .select('booking_id,total_amount,status')
+          .select('booking_id,total_amount,status,additional_services_amount')
           .in('booking_id', bookingIds)
           .neq('status', 'void');
         (invs || []).forEach((inv: any) => {
           const bid = inv.booking_id;
           if (!bid) return;
-          const prev = invoiceSumByBooking.get(bid) || { sum: 0, count: 0 };
-          invoiceSumByBooking.set(bid, { sum: prev.sum + (Number(inv.total_amount) || 0), count: prev.count + 1 });
+          const prev = invoiceSumByBooking.get(bid) || { sum: 0, count: 0, hasAdditionalServices: false };
+          invoiceSumByBooking.set(bid, {
+            sum: prev.sum + (Number(inv.total_amount) || 0),
+            count: prev.count + 1,
+            hasAdditionalServices: prev.hasAdditionalServices || (Number(inv.additional_services_amount) || 0) > 0
+          });
         });
       }
 
@@ -330,18 +356,32 @@ export default function BookingsListTable({
         });
       }
 
-      setRows(
-        bookings.map((b: any) => {
-          const invAgg = invoiceSumByBooking.get(b.id);
-          const amount = invAgg && invAgg.count > 0 ? invAgg.sum : Number(b.total_price || 0);
-          return {
-            booking: b as any,
-            amount,
-            hasKey: bookingsWithKeys.has(String(b.id)),
-            ejar: ejarByBookingId.get(String(b.id)) ?? null,
-          };
-        })
-      );
+      let finalRows = bookings.map((b: any) => {
+        const invAgg = invoiceSumByBooking.get(b.id);
+        const amount = invAgg && invAgg.count > 0 ? invAgg.sum : Number(b.total_price || 0);
+        const hasEjarUpload = ejarByBookingId.has(String(b.id));
+        const hasAdditionalServices = invAgg?.hasAdditionalServices ?? false;
+        return {
+          booking: b as any,
+          amount,
+          hasKey: bookingsWithKeys.has(String(b.id)),
+          ejar: ejarByBookingId.get(String(b.id)) ?? null,
+          hasEjarUpload,
+          hasAdditionalServices
+        };
+      });
+
+      // Filter by contract status
+      if (contractStatus !== 'all') {
+        finalRows = finalRows.filter((row) => {
+          if (contractStatus === 'ejar_uploaded') return row.hasEjarUpload;
+          if (contractStatus === 'additional_services') return row.hasAdditionalServices && !row.hasEjarUpload;
+          if (contractStatus === 'none') return !row.hasEjarUpload && !row.hasAdditionalServices;
+          return true;
+        });
+      }
+
+      setRows(finalRows);
     } catch (e: any) {
       setRows([]);
       setHasNext(false);
@@ -349,7 +389,7 @@ export default function BookingsListTable({
     } finally {
       setLoading(false);
     }
-  }, [arrival, departure, pageNum, pageSize, q, selectedHotelId, status, type]);
+  }, [arrival, departure, pageNum, pageSize, q, selectedHotelId, status, type, contractStatus]);
 
   React.useEffect(() => {
     load();
@@ -413,6 +453,29 @@ export default function BookingsListTable({
     return items;
   }, [pageNum, totalPages]);
 
+  // Booking indicator component
+  const BookingIndicator = ({ row }: { row: typeof rows[0] }) => {
+    let color = 'bg-gray-400';
+    if (row.hasEjarUpload) {
+      color = 'bg-green-500';
+    } else if (row.hasAdditionalServices) {
+      color = 'bg-red-500';
+    }
+    
+    return (
+      <div 
+        className={`w-2.5 h-2.5 rounded-full ${color} flex-shrink-0`} 
+        title={
+          row.hasEjarUpload 
+            ? 'تم رفع العقد إلى منصة إيجار' 
+            : row.hasAdditionalServices 
+              ? 'يوجد إضافات على الفاتورة' 
+              : 'لا يوجد رفع إيجار ولا إضافات'
+        }
+      />
+    );
+  };
+
   return (
     <div className="space-y-3">
       <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-visible relative z-30">
@@ -471,6 +534,7 @@ export default function BookingsListTable({
                     className="w-full pr-3 pl-9 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none appearance-none"
                   >
                     <option value="all">كل الحالات</option>
+                    <option value="active">حجوزات نشطة حالياً</option>
                     <option value="pending_deposit">بانتظار العربون</option>
                     <option value="confirmed">مؤكد</option>
                     <option value="checked_in">تم الدخول</option>
@@ -499,6 +563,26 @@ export default function BookingsListTable({
                 </div>
               </div>
             </div>
+
+            <div className="lg:col-span-4 space-y-1.5">
+              <label className="text-xs sm:text-sm font-bold text-emerald-950">حالة العقد</label>
+              <div className="relative">
+                <ChevronDown size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-700 pointer-events-none" />
+                <select
+                  value={contractStatus}
+                  onChange={(e) => {
+                    setPageNum(1);
+                    setContractStatus(e.target.value);
+                  }}
+                  className="w-full pr-3 pl-9 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none appearance-none"
+                >
+                  <option value="all">كل الحجوزات</option>
+                  <option value="ejar_uploaded">مرفوع إلى منصة إيجار</option>
+                  <option value="additional_services">لديه إضافات على الفاتورة</option>
+                  <option value="none">بدون إضافات ولا رفع إيجار</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -508,6 +592,7 @@ export default function BookingsListTable({
           <table className="w-full text-[9px] sm:text-sm text-right">
             <thead className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 border-b border-emerald-950 text-white font-bold">
               <tr>
+                <th className="px-2 sm:px-6 py-2 sm:py-4 w-10"></th>
                 <th className="px-2 sm:px-6 py-2 sm:py-4">رقم الحجز</th>
                 <th className="px-2 sm:px-6 py-2 sm:py-4">العميل</th>
                 <th className="px-2 sm:px-6 py-2 sm:py-4">الوحدة</th>
@@ -524,6 +609,9 @@ export default function BookingsListTable({
                 const statusInfo = STATUS_MAP[b.status] || { label: b.status, color: 'bg-gray-100 text-gray-900' };
                 return (
                   <tr key={b.id} className="hover:bg-emerald-50 transition-colors">
+                    <td className="px-1 sm:px-6 py-1 sm:py-4">
+                      <BookingIndicator row={r} />
+                    </td>
                     <td className="px-1 sm:px-6 py-1 sm:py-4 font-mono font-bold text-gray-900 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         <span className="text-emerald-800">
@@ -601,7 +689,7 @@ export default function BookingsListTable({
               })}
               {!loading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-2 sm:px-6 py-10 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-sm">
+                  <td colSpan={9} className="px-2 sm:px-6 py-10 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-sm">
                     لا توجد حجوزات مطابقة
                   </td>
                 </tr>

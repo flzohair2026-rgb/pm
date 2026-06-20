@@ -245,6 +245,7 @@ export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId
             onNext={handleDepositConfirm}
             onBack={handleBack}
             language={language}
+            unit={bookingData.unit}
           />
         );
       case 'confirm':

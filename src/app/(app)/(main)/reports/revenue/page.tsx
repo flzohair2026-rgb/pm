@@ -33,6 +33,7 @@ export default function RevenueReportPage() {
   const [showAccountingDetails, setShowAccountingDetails] = useState(false);
   const [hotelTotals, setHotelTotals] = useState<Array<{ hotel_id: string; hotel_name: string; total: number }>>([]);
   const selectedHotelId = activeHotelId || 'all';
+  const isManager = role === 'manager';
 
   useEffect(() => {
     try {
@@ -54,12 +55,22 @@ export default function RevenueReportPage() {
   });
 
   useEffect(() => {
+    if (roleLoading) return;
+    if (!role) return;
     fetchData();
-  }, [startDate, endDate, showAccountingDetails, selectedHotelId]);
+  }, [roleLoading, role, startDate, endDate, showAccountingDetails, selectedHotelId]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      if (role === 'manager') {
+        setRevenueData([]);
+        setTotalRevenue(0);
+        setHotelTotals([]);
+        setAccounts([]);
+        return;
+      }
+
       const { data: hotelsData } = await supabase
         .from('hotels')
         .select('id, name')
@@ -310,6 +321,7 @@ export default function RevenueReportPage() {
   };
 
   const exportToExcel = async () => {
+    if (role === 'manager') return;
     if (exportingExcel) return;
     setExportingExcel(true);
     try {
@@ -446,6 +458,7 @@ export default function RevenueReportPage() {
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 className="text-sm border-none focus:ring-0 p-0 text-gray-700"
+                disabled={isManager}
               />
               <span className="text-gray-400">-</span>
               <input 
@@ -453,13 +466,15 @@ export default function RevenueReportPage() {
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 className="text-sm border-none focus:ring-0 p-0 text-gray-700"
+                disabled={isManager}
               />
             </div>
           </div>
           
           <button 
             onClick={() => window.print()}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors font-medium shadow-sm print:hidden"
+            disabled={isManager}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors font-medium shadow-sm print:hidden disabled:opacity-60"
           >
             <Download size={18} />
             طباعة
@@ -467,7 +482,7 @@ export default function RevenueReportPage() {
 
           <button
             onClick={exportToExcel}
-            disabled={exportingExcel}
+            disabled={exportingExcel || isManager}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors font-medium shadow-sm disabled:opacity-60 print:hidden"
             title="تصدير إلى Excel"
           >
@@ -477,7 +492,8 @@ export default function RevenueReportPage() {
 
           <button
             onClick={() => setShowAccountingDetails(!showAccountingDetails)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all font-bold shadow-sm print:hidden ${
+            disabled={isManager}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all font-bold shadow-sm print:hidden disabled:opacity-60 ${
               showAccountingDetails 
                 ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' 
                 : 'bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50'
@@ -490,7 +506,16 @@ export default function RevenueReportPage() {
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {isManager && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-900">
+          <div className="font-extrabold mb-1">عرض مقيد</div>
+          <div className="text-sm font-bold text-amber-900/80">
+            يمكنك فتح صفحة تقرير الإيرادات، لكن لا يمكن عرض أي بيانات مالية لحساب المدير. إذا احتجت البيانات، اطلب صلاحية محاسب أو أدمن.
+          </div>
+        </div>
+      )}
+
+      {!isManager && (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         <KPICard 
           title={showAccountingDetails ? "إجمالي الإيرادات (الصافي)" : "إجمالي المقبوضات"} 
@@ -520,8 +545,9 @@ export default function RevenueReportPage() {
           description="متوسط قيمة القبض للعملية الواحدة"
         />
       </div>
+      )}
 
-      {selectedHotelId === 'all' && !loading && hotelTotals.length > 0 && (
+      {!isManager && selectedHotelId === 'all' && !loading && hotelTotals.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="p-6 border-b border-gray-200 flex justify-between items-center">
             <h3 className="font-bold text-lg text-gray-900">ملخص الإيرادات حسب الفندق</h3>
@@ -551,17 +577,20 @@ export default function RevenueReportPage() {
       )}
 
       {/* Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-3">
-          <RevenueChart 
-            data={chartData} 
-            title="تحليل التدفقات النقدية الداخلة"
-            description="توزيع المقبوضات حسب التاريخ"
-          />
+      {!isManager && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-3">
+            <RevenueChart 
+              data={chartData} 
+              title="تحليل التدفقات النقدية الداخلة"
+              description="توزيع المقبوضات حسب التاريخ"
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Detailed Table */}
+      {!isManager && (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-6 border-b border-gray-200 flex justify-between items-center">
           <h3 className="font-bold text-lg text-gray-900">سجل عمليات القبض</h3>
@@ -655,6 +684,7 @@ export default function RevenueReportPage() {
           </table>
         </div>
       </div>
+      )}
     </div>
     <div className="print-only">
       <div className="print-header">

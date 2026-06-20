@@ -52,6 +52,27 @@ const formatStatusAr = (status: string) => {
   return map[s] || s;
 };
 
+/** مكون عرض العلامة للحجز */
+const BookingIndicator = ({ hasEjar, hasAdditional }: { hasEjar: boolean; hasAdditional: boolean }) => {
+  let color = 'bg-gray-400';
+  let title = 'بدون إضافات أو رفع لمنصة إيجار';
+
+  if (hasEjar) {
+    color = 'bg-emerald-500';
+    title = 'مرفوع لمنصة إيجار';
+  } else if (hasAdditional) {
+    color = 'bg-red-500';
+    title = 'يوجد إضافات على الفاتورة';
+  }
+
+  return (
+    <div
+      className={`w-3 h-3 rounded-full ${color} flex-shrink-0`}
+      title={title}
+    />
+  );
+};
+
 /** حساب تاريخ استحقاق الدفعة القادمة */
 const calculateNextPaymentDue = (
   checkIn: string,
@@ -183,6 +204,10 @@ interface Row {
   /** عدد الفواتير المرتبطة بالحجز (يشمل فواتير التمديد) */
   invoice_count: number;
   status: string;
+  /** هل الحجز مرفوع لمنصة إيجار */
+  has_ejar_upload: boolean;
+  /** هل الحجز لديه إضافات على الفواتير */
+  has_additional_services: boolean;
 }
 
 export default function BookingsLogReportPage() {
@@ -202,6 +227,7 @@ export default function BookingsLogReportPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchText, setSearchText] = useState('');
   const [printMode, setPrintMode] = useState<'standard' | 'installments'>('standard');
+  const [indicatorFilter, setIndicatorFilter] = useState<string>('all');
   const selectedHotelId = activeHotelId || 'all';
 
   useEffect(() => {
@@ -259,7 +285,7 @@ export default function BookingsLogReportPage() {
           total_price,
           booking_type,
           unit:units(unit_number, unit_types(name), hotel:hotels(id, name)),
-          invoices(id, total_amount, status)
+          invoices(id, total_amount, status, additional_services_amount)
         `)
         .lte('check_in', endDate)
         .gt('check_out', startDate);
@@ -309,13 +335,23 @@ export default function BookingsLogReportPage() {
 
       const bookingList = bookings || [];
 
+      // جلب معلومات منصة إيجار للوحدات
+      const bookingIds = bookingList.map((b: any) => b.id);
+      const { data: ejarUploads, error: ejarError } = await supabase
+        .from('ejar_contract_uploads')
+        .select('booking_id')
+        .in('booking_id', bookingIds);
+
+      if (ejarError) console.warn('تعذر جلب معلومات منصة إيجار:', ejarError);
+      const ejarBookingIds = new Set((ejarUploads || []).map((e: any) => e.booking_id));
+
       const needsInvoiceFallback = (b: any) => {
         const cid = b?.customer_id ? String(b.customer_id) : null;
         return !cid || !hasAccountByCustomerId[cid];
       };
 
       const ledgerByBooking: Record<string, { debit: number; credit: number }> = {};
-      const bookingIds = bookingList.map((b: any) => String(b.id));
+      const ledgerBookingIds = bookingList.map((b: any) => String(b.id));
       try {
         for (const chunk of fetchIdChunks(bookingIds, 80)) {
           const { data: ledgerRows, error: ledgerErr } = await supabase.rpc(
@@ -388,6 +424,11 @@ export default function BookingsLogReportPage() {
           invoiceTotal = Number(b.total_price || 0);
         }
 
+        // تحقق من وجود إضافات على الفواتير
+        const hasAdditionalServices = activeInvoices.some(
+          (inv: any) => Number(inv.additional_services_amount || 0) > 0
+        );
+
         let paidSum: number;
         let balance: number;
         let amountsFromLedger = false;
@@ -440,6 +481,8 @@ export default function BookingsLogReportPage() {
           amounts_from_ledger: amountsFromLedger,
           invoice_count: activeInvoices.length,
           status: b.status || '',
+          has_ejar_upload: ejarBookingIds.has(b.id),
+          has_additional_services: hasAdditionalServices,
         };
       });
 
@@ -494,9 +537,32 @@ export default function BookingsLogReportPage() {
 
   const filteredRows = useMemo(() => {
     const t = searchText.trim();
+    const today = new Date().toISOString().split('T')[0];
+    
     return rows.filter((r) => {
       if (selectedHotelId !== 'all' && r.hotel_id !== selectedHotelId) return false;
-      if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'active_now') {
+          const checkIn = String(r.check_in || '').split('T')[0];
+          const checkOut = String(r.check_out || '').split('T')[0];
+          if (!(checkIn <= today && checkOut > today)) {
+            return false;
+          }
+        } else if (r.status !== statusFilter) {
+          return false;
+        }
+      }
+
+      if (indicatorFilter !== 'all') {
+        if (indicatorFilter === 'ejar' && !r.has_ejar_upload) {
+          return false;
+        } else if (indicatorFilter === 'additional' && !r.has_additional_services) {
+          return false;
+        } else if (indicatorFilter === 'none' && (r.has_ejar_upload || r.has_additional_services)) {
+          return false;
+        }
+      }
 
       if (t) {
         const inName = (r.customer_name || '').includes(t);
@@ -508,7 +574,7 @@ export default function BookingsLogReportPage() {
 
       return true;
     });
-  }, [rows, selectedHotelId, statusFilter, searchText]);
+  }, [rows, selectedHotelId, statusFilter, indicatorFilter, searchText]);
 
   const totals = useMemo(() => {
     const count = filteredRows.length;
@@ -885,6 +951,7 @@ export default function BookingsLogReportPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
                 >
                   <option value="all">كل الحالات</option>
+                  <option value="active_now">حجوزات نشطة حاليا</option>
                   <option value="confirmed">confirmed</option>
                   <option value="deposit_paid">deposit_paid</option>
                   <option value="checked_in">checked_in</option>
@@ -902,6 +969,20 @@ export default function BookingsLogReportPage() {
                   {selectedHotelName}
                   {isAdmin && selectedHotelId === 'all' ? <span className="mr-2 text-[10px] font-black text-gray-500"> (من الهيدر)</span> : null}
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs sm:text-sm font-medium text-gray-700">حالة العقد</label>
+                <select
+                  value={indicatorFilter}
+                  onChange={(e) => setIndicatorFilter(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                >
+                  <option value="all">كل الحجوزات</option>
+                  <option value="ejar">مرفوع لمنصة إيجار</option>
+                  <option value="additional">لديه إضافات على الفواتير</option>
+                  <option value="none">بدون إضافات أو رفع</option>
+                </select>
               </div>
 
               <div className="space-y-1.5 sm:col-span-2">
@@ -982,9 +1063,12 @@ export default function BookingsLogReportPage() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden overflow-x-auto">
-            <table className="w-full text-right min-w-[1300px]">
+            <table className="w-full text-right min-w-[1350px]">
               <thead className="bg-gray-100 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap w-12">
+                    
+                  </th>
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
                     العميل
                   </th>
@@ -1037,7 +1121,7 @@ export default function BookingsLogReportPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       className="px-6 py-12 text-center text-gray-500"
                     >
                       جاري تحميل البيانات...
@@ -1046,6 +1130,14 @@ export default function BookingsLogReportPage() {
                 ) : filteredRows.length > 0 ? (
                   filteredRows.map((r) => (
                     <tr key={r.id} className="hover:bg-gray-50 transition-colors odd:bg-white even:bg-gray-50">
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
+                        <div className="flex justify-center">
+                          <BookingIndicator
+                            hasEjar={r.has_ejar_upload}
+                            hasAdditional={r.has_additional_services}
+                          />
+                        </div>
+                      </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 font-medium text-gray-900 whitespace-nowrap">
                         {formatShortName(r.customer_name)}
                       </td>
@@ -1120,7 +1212,7 @@ export default function BookingsLogReportPage() {
                 ) : (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       className="px-6 py-12 text-center text-gray-500"
                     >
                       لا توجد بيانات ضمن الفترة المحددة
@@ -1220,6 +1312,7 @@ export default function BookingsLogReportPage() {
           <table className="p-table">
             <thead>
               <tr>
+                <th style={{ width: '20px' }}></th>
                 <th>العميل</th>
                 <th>الهاتف</th>
                 <th>الفندق</th>
@@ -1236,9 +1329,28 @@ export default function BookingsLogReportPage() {
             </thead>
             <tbody>
               {filteredRows.length > 0 ? (
-                filteredRows.map((r) => (
-                  <tr key={r.id}>
-                    <td>{formatShortName(r.customer_name)}</td>
+                filteredRows.map((r) => {
+                  // تحديد لون العلامة للطباعة
+                  let dotColor = '#9ca3af'; // رمادي
+                  if (r.has_ejar_upload) {
+                    dotColor = '#10b981'; // أخضر
+                  } else if (r.has_additional_services) {
+                    dotColor = '#ef4444'; // أحمر
+                  }
+                  return (
+                    <tr key={r.id}>
+                      <td style={{ textAlign: 'center' }}>
+                        <div
+                          style={{
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            backgroundColor: dotColor,
+                            display: 'inline-block',
+                          }}
+                        />
+                      </td>
+                      <td>{formatShortName(r.customer_name)}</td>
                     <td>{r.phone || '-'}</td>
                     <td>{r.hotel_name || '-'}</td>
                     <td>
@@ -1260,10 +1372,10 @@ export default function BookingsLogReportPage() {
                     <td className="font-mono">{formatSarEn(r.balance)}</td>
                     <td>{formatStatusAr(r.status)}</td>
                   </tr>
-                ))
+                )})
               ) : (
                 <tr>
-                  <td colSpan={12} style={{ textAlign: 'center', padding: '12px' }}>
+                  <td colSpan={13} style={{ textAlign: 'center', padding: '12px' }}>
                     لا توجد بيانات ضمن الفترة المحددة
                   </td>
                 </tr>
