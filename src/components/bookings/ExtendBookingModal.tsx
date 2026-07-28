@@ -8,6 +8,8 @@ interface ExtendBookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   booking: {
+    hotel_id: null;
+    customer_id: null;
     id: string;
     check_out: string;
     unit_id: string;
@@ -230,11 +232,68 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
         });
       } catch {}
 
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        await supabase.from('system_events').insert({
+          event_type: 'booking_extended',
+          booking_id: booking.id,
+          unit_id: booking.unit_id,
+          customer_id: booking.customer_id ?? null,
+          hotel_id: booking.hotel_id ?? null,
+          message: `تمديد الحجز ${extendText}`,
+          created_by: authData?.user?.id || null,
+          payload: {
+            booking_id: booking.id,
+            invoice_id: invoiceId || null,
+            period_start: previousEndDate,
+            period_end: newEndDate,
+            extend_type: extendType,
+            duration_months: extendType === 'yearly' ? Number(durationMonths) : null,
+            nights: extendType === 'daily' ? Number(priceDetails.nights) : null,
+            base_subtotal: Number(baseSubtotal || 0),
+            discount_amount: Number(discountAmount || 0),
+            extras_amount: Number(extraAmount || 0),
+            apply_tax: includeTax,
+            tax_rate: resolvedTaxRate,
+            actor_id: authData?.user?.id || null,
+            actor_email: authData?.user?.email || null
+          }
+        });
+      } catch {}
+
       onSuccess();
       onClose();
       alert('تم تمديد الحجز بنجاح!');
     } catch (err: any) {
       console.error('Extension Error:', err);
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        await supabase.from('system_events').insert({
+          event_type: 'booking_extend_failed',
+          booking_id: booking.id,
+          unit_id: booking.unit_id,
+          customer_id: booking.customer_id,
+          hotel_id: booking.hotel_id || null,
+          message: `فشل تمديد الحجز ${extendText}`,
+          created_by: authData?.user?.id || null,
+          payload: {
+            booking_id: booking.id,
+            period_start: previousEndDate,
+            period_end: newEndDate,
+            extend_type: extendType,
+            duration_months: extendType === 'yearly' ? Number(durationMonths) : null,
+            nights: extendType === 'daily' ? Number(priceDetails.nights) : null,
+            base_subtotal: Number(baseSubtotal || 0),
+            discount_amount: Number(discountAmount || 0),
+            extras_amount: Number(extraAmount || 0),
+            apply_tax: includeTax,
+            tax_rate: resolvedTaxRate,
+            error: String(err?.message || err || 'خطأ غير معروف'),
+            actor_id: authData?.user?.id || null,
+            actor_email: authData?.user?.email || null
+          }
+        });
+      } catch {}
       const msg = String(err?.message || '');
       if (msg.includes('Could not find the') && msg.includes('schema cache')) {
         alert('تعذر تنفيذ التمديد لأن دالة التمديد غير ظاهرة في مخطط قاعدة البيانات (schema cache). يلزم إعادة تحميل مخطط Supabase ثم إعادة المحاولة.');
