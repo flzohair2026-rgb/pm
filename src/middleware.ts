@@ -43,21 +43,25 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: userRes } = await supabase.auth.getUser()
-  const user = userRes?.user ?? null
+  let user = null
+  try {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const session = sessionData?.session ?? null
+    if (session?.user) {
+      user = session.user
+    } else if (request.nextUrl.pathname.startsWith('/login')) {
+      const { data: userRes } = await supabase.auth.getUser()
+      user = userRes?.user ?? null
+    }
+  } catch {}
 
-  // If user is signed in and the current path is /login redirect the user to /
   if (user && request.nextUrl.pathname.startsWith('/login')) {
     return NextResponse.redirect(new URL('/', request.url))
   }
-
-  // NOTE: We don't force redirect unauthenticated users to /login here anymore.
-  // This prevents the "Server-side Redirect Lag" when sessions are desynced.
-  // The Client-side hooks (useUserRole) and RoleGate will handle access control.
 
   return response
 }
 
 export const config = {
-  matcher: ['/', '/login', '/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/', '/login', '/((?!_next/static|_next/image|favicon.ico|api).*)'],
 }

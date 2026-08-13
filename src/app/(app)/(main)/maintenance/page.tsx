@@ -19,9 +19,11 @@ import {
   MessageSquare,
   AlertTriangle,
   Award,
-  Plus
+  Plus,
+  Brush
 } from 'lucide-react';
 import { useUserRole } from '@/hooks/useUserRole';
+import { useAppLanguage } from '@/hooks/useAppLanguage';
 import { cn } from '@/lib/utils';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
 
@@ -43,6 +45,9 @@ interface Unit {
   hotel_id: string;
   hotel?: Hotel;
   unit_type?: UnitType;
+  // ✅ حقول إضافية اختيارية لفلترة الهاوس كيبنج (تجاوز الخروج)
+  next_action?: string | null;
+  remaining_days?: number | null;
 }
 
 interface UserProfile {
@@ -108,19 +113,40 @@ interface StaffNote {
   creator_name?: string;
 }
 
-const STATUS_LABELS = {
-  available: { label: 'متاح', color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle },
-  occupied: { label: 'مشغول', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: BedDouble },
-  maintenance: { label: 'صيانة', color: 'bg-red-100 text-red-700 border-red-200', icon: AlertCircle },
-  cleaning: { label: 'تنظيف', color: 'bg-amber-100 text-amber-700 border-amber-200', icon: Wrench },
+const STATUS_LABELS: Record<Unit['status'], { label: { ar: string; en: string; ur: string }; color: string; icon: any }> = {
+  available: { label: { ar: 'متاح', en: 'Available', ur: 'دستیاب' }, color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle },
+  occupied: { label: { ar: 'مشغول', en: 'Occupied', ur: 'مصروف' }, color: 'bg-blue-100 text-blue-700 border-blue-200', icon: BedDouble },
+  maintenance: { label: { ar: 'صيانة', en: 'Maintenance', ur: 'مرمت' }, color: 'bg-red-100 text-red-700 border-red-200', icon: AlertCircle },
+  cleaning: { label: { ar: 'تنظيف', en: 'Cleaning', ur: 'صفائی' }, color: 'bg-amber-100 text-amber-700 border-amber-200', icon: Wrench },
 };
 
 export default function MaintenancePage() {
   const { role } = useUserRole();
+  const { language, setLanguage } = useAppLanguage();
+  const t = (arText: string, enText: string, urText?: string) => {
+    if (language === 'ur') return urText ?? arText;
+    return language === 'en' ? enText : arText;
+  };
+  const dateLocale = language === 'en' ? 'en-GB' : language === 'ur' ? 'ur-PK' : 'ar-EG';
+  const timeLocale = language === 'en' ? 'en-US' : language === 'ur' ? 'ur-PK' : 'ar-SA';
   const { activeHotelId } = useActiveHotel();
   const isReceptionist = role === 'receptionist';
+  const isHousekeeping = role === 'housekeeping';
   const selectedHotelId = activeHotelId || 'all';
-  const [activeTab, setActiveTab] = useState<'needs_maintenance' | 'all' | 'history' | 'notes'>('needs_maintenance');
+  type MaintenanceTab = 'needs_maintenance' | 'needs_cleaning' | 'available_units' | 'all' | 'history' | 'notes';
+  const HOUSEKEEPING_ALLOWED: MaintenanceTab[] = ['needs_maintenance', 'needs_cleaning', 'available_units'];
+  const initialTab: MaintenanceTab = 'needs_maintenance';
+  const [rawActiveTab, setRawActiveTab] = useState<MaintenanceTab>(initialTab);
+  const activeTab: MaintenanceTab = React.useMemo(() => {
+    if (isHousekeeping && !HOUSEKEEPING_ALLOWED.includes(rawActiveTab)) {
+      return 'needs_maintenance';
+    }
+    return rawActiveTab;
+  }, [isHousekeeping, rawActiveTab]);
+  const setActiveTab = (next: MaintenanceTab) => {
+    if (isHousekeeping && !HOUSEKEEPING_ALLOWED.includes(next)) return;
+    setRawActiveTab(next);
+  };
   const [units, setUnits] = useState<Unit[]>([]);
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
@@ -132,9 +158,9 @@ export default function MaintenancePage() {
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const selectedHotelName = React.useMemo(() => {
-    if (selectedHotelId === 'all') return 'الكل';
+    if (selectedHotelId === 'all') return t('الكل', 'All', 'تمام');
     return hotels.find((h) => String(h.id) === String(selectedHotelId))?.name || '-';
-  }, [hotels, selectedHotelId]);
+  }, [hotels, selectedHotelId, language]);
   
   // Maintenance Request Modal State (Report Issue)
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -182,16 +208,14 @@ export default function MaintenancePage() {
   // Fetch Data
   useEffect(() => {
     if (activeTab === 'history') {
-      fetchHistory();
-      fetchProfiles();
+      if (!isHousekeeping) { fetchHistory(); fetchProfiles(); }
     } else if (activeTab === 'notes') {
-      fetchNotes();
-      fetchProfiles();
+      if (!isHousekeeping) { fetchNotes(); fetchProfiles(); }
     } else {
       fetchData();
     }
     fetchCurrentUser();
-  }, [activeTab, selectedHotelId]);
+  }, [activeTab, selectedHotelId, isHousekeeping]);
 
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*');
@@ -809,6 +833,15 @@ export default function MaintenancePage() {
     if (activeTab === 'needs_maintenance') {
       return unit.status === 'maintenance';
     }
+    if (activeTab === 'needs_cleaning') {
+      return unit.status === 'cleaning';
+    }
+    // ✅ تبويب الوحدات المتاحة فقط — ولاكن التي عليها تجاوز خروج NO (لا تظهر!)
+    if (activeTab === 'available_units') {
+      const isAvailable = unit.status === 'available';
+      const isOverdueCheckout = unit.next_action === 'overdue';
+      return isAvailable && !isOverdueCheckout;
+    }
     
     return true;
   });
@@ -820,18 +853,41 @@ export default function MaintenancePage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Wrench className="text-red-600" />
-            صيانة الوحدات
+            {t('صيانة الوحدات', 'Unit maintenance', 'یونٹس کی مرمت')}
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            إدارة ومتابعة صيانة الغرف والوحدات السكنية
+            {t('إدارة ومتابعة صيانة الغرف والوحدات السكنية', 'Manage and track unit maintenance', 'کمرے اور رہائشی یونٹس کی مرمت کا نظم و نسق')}
           </p>
         </div>
 
-        {/* Filters */}
-        <div className="w-full md:w-auto flex items-center gap-3 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
-          <Filter size={18} className="text-gray-400 mr-1 shrink-0" />
-          <div className="w-full md:w-auto text-sm text-gray-700 font-bold bg-transparent outline-none min-w-[150px]">
-            {selectedHotelName}
+        {/* Filters + Language Switcher */}
+        <div className="w-full md:w-auto flex flex-wrap items-center gap-3">
+          {/* Language Switcher: AR / EN / UR */}
+          <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
+            {(['ar', 'en', 'ur'] as const).map((lang) => {
+              const label = lang === 'ar' ? 'العربية' : lang === 'en' ? 'English' : 'اردو';
+              return (
+                <button
+                  key={lang}
+                  onClick={() => setLanguage(lang as any)}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-md transition-colors",
+                    language === lang
+                      ? "bg-red-600 text-white shadow-sm"
+                      : "text-gray-600 hover:bg-gray-100"
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="w-full md:w-auto flex items-center gap-3 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
+            <Filter size={18} className="text-gray-400 mr-1 shrink-0" />
+            <div className="w-full md:w-auto text-sm text-gray-700 font-bold bg-transparent outline-none min-w-[150px]">
+              {selectedHotelName}
+            </div>
           </div>
         </div>
       </div>
@@ -854,48 +910,87 @@ export default function MaintenancePage() {
               {units.filter(u => u.status === 'maintenance' && (selectedHotelId === 'all' || u.hotel_id === selectedHotelId)).length}
             </span>
           </button>
-          
+
+          {/* ✅ تبويب جديد: تحتاج تنظيف — يظهر للجميع وينتقل فيه الهاوس كيبنج مباشرة */}
           <button
-            onClick={() => setActiveTab('all')}
+            onClick={() => setActiveTab('needs_cleaning')}
             className={cn(
               "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
-              activeTab === 'all'
-                ? "border-red-600 text-red-600"
+              activeTab === 'needs_cleaning'
+                ? "border-amber-600 text-amber-700"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             )}
           >
-            <BedDouble size={16} />
-            كل الوحدات
-            <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
-              {selectedHotelId === 'all' ? units.length : units.filter(u => u.hotel_id === selectedHotelId).length}
+            <Brush size={16} />
+            تحتاج تنظيف
+            <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs">
+              {units.filter(u => u.status === 'cleaning' && (selectedHotelId === 'all' || u.hotel_id === selectedHotelId)).length}
             </span>
           </button>
 
+          {/* ✅ تبويب جديد: وحدات متاحة — للهاوس كيبنج أيضاً (ولا تظهر له وحدات تجاوز الخروج) */}
           <button
-            onClick={() => setActiveTab('history')}
+            onClick={() => setActiveTab('available_units')}
             className={cn(
               "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
-              activeTab === 'history'
-                ? "border-red-600 text-red-600"
+              activeTab === 'available_units'
+                ? "border-emerald-600 text-emerald-700"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             )}
           >
-            <ClipboardList size={16} />
-            سجل الصيانة
+            <CheckCircle size={16} />
+            وحدات متاحة
+            <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs">
+              {units.filter(u => u.status === 'available' && u.next_action !== 'overdue' && (selectedHotelId === 'all' || u.hotel_id === selectedHotelId)).length}
+            </span>
           </button>
+          
+          {/* باقي التبويبات: للادمن والمدير فقط — لا تظهر للهاوس كيبنج */}
+          {!isHousekeeping && (
+            <>
+              <button
+                onClick={() => setActiveTab('all')}
+                className={cn(
+                  "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
+                  activeTab === 'all'
+                    ? "border-red-600 text-red-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                )}
+              >
+                <BedDouble size={16} />
+                كل الوحدات
+                <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
+                  {selectedHotelId === 'all' ? units.length : units.filter(u => u.hotel_id === selectedHotelId).length}
+                </span>
+              </button>
 
-          <button
-            onClick={() => setActiveTab('notes')}
-            className={cn(
-              "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
-              activeTab === 'notes'
-                ? "border-red-600 text-red-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            )}
-          >
-            <MessageSquare size={16} />
-            الملاحظات والمخالفات
-          </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className={cn(
+                  "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
+                  activeTab === 'history'
+                    ? "border-red-600 text-red-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                )}
+              >
+                <ClipboardList size={16} />
+                سجل الصيانة
+              </button>
+
+              <button
+                onClick={() => setActiveTab('notes')}
+                className={cn(
+                  "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
+                  activeTab === 'notes'
+                    ? "border-red-600 text-red-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                )}
+              >
+                <MessageSquare size={16} />
+                الملاحظات والمخالفات
+              </button>
+            </>
+          )}
         </nav>
       </div>
 
@@ -1276,8 +1371,12 @@ export default function MaintenancePage() {
           <h3 className="text-lg font-medium text-gray-900">لا توجد وحدات</h3>
           <p className="text-gray-500">
             {activeTab === 'needs_maintenance' 
-              ? 'جميع الوحدات سليمة وجاهزة!' 
-              : 'لا توجد وحدات مطابقة للفلتر المحدد'}
+              ? 'لا توجد وحدات بحاجة للصيانة حالياً.'
+              : activeTab === 'needs_cleaning'
+                ? 'جميع الوحدات نظيفة وجاهزة!'
+                : activeTab === 'available_units'
+                  ? 'لا توجد وحدات متاحة حالياً.'
+                  : 'لا توجد وحدات مطابقة للفلتر المحدد'}
           </p>
         </div>
       ) : (
@@ -1307,7 +1406,7 @@ export default function MaintenancePage() {
                     STATUS_LABELS[unit.status].color
                   )}>
                     <StatusIcon size={12} />
-                    {STATUS_LABELS[unit.status].label}
+                    {language === 'en' ? STATUS_LABELS[unit.status].label.en : language === 'ur' ? STATUS_LABELS[unit.status].label.ur : STATUS_LABELS[unit.status].label.ar}
                   </div>
                 </div>
 

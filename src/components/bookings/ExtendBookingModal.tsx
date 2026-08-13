@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { format, addDays, addMonths, differenceInCalendarDays, parseISO } from 'date-fns';
 import { Calendar, AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
@@ -37,6 +37,33 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
   const [showExtra, setShowExtra] = useState(false);
   const [discountAmount, setDiscountAmount] = useState<number>(0);
   const [extraAmount, setExtraAmount] = useState<number>(0);
+
+  const actorCacheRef = useRef<{ actorId: string | null; actorEmail: string | null; promise: Promise<void> | null }>({ actorId: null, actorEmail: null, promise: null });
+  const ensureActorLoaded = async (): Promise<{ actorId: string | null; actorEmail: string | null }> => {
+    if (actorCacheRef.current.actorId || actorCacheRef.current.promise) {
+      if (actorCacheRef.current.promise) await actorCacheRef.current.promise;
+      return { actorId: actorCacheRef.current.actorId, actorEmail: actorCacheRef.current.actorEmail };
+    }
+    actorCacheRef.current.promise = (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const sessionUser = sessionData?.session?.user ?? null;
+        if (sessionUser?.id) {
+          actorCacheRef.current.actorId = sessionUser.id;
+          actorCacheRef.current.actorEmail = sessionUser.email ?? null;
+          return;
+        }
+        const { data: authData } = await supabase.auth.getUser();
+        actorCacheRef.current.actorId = authData?.user?.id ?? null;
+        actorCacheRef.current.actorEmail = authData?.user?.email ?? null;
+      } catch {
+        actorCacheRef.current.actorId = null;
+        actorCacheRef.current.actorEmail = null;
+      }
+    })();
+    await actorCacheRef.current.promise;
+    return { actorId: actorCacheRef.current.actorId, actorEmail: actorCacheRef.current.actorEmail };
+  };
 
   const resolvedTaxRate = React.useMemo(() => {
     const ut: any = booking?.unit?.unit_type;
@@ -233,7 +260,7 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
       } catch {}
 
       try {
-        const { data: authData } = await supabase.auth.getUser();
+        const { actorId, actorEmail } = await ensureActorLoaded();
         await supabase.from('system_events').insert({
           event_type: 'booking_extended',
           booking_id: booking.id,
@@ -241,7 +268,7 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
           customer_id: booking.customer_id ?? null,
           hotel_id: booking.hotel_id ?? null,
           message: `تمديد الحجز ${extendText}`,
-          created_by: authData?.user?.id || null,
+          created_by: actorId || null,
           payload: {
             booking_id: booking.id,
             invoice_id: invoiceId || null,
@@ -255,8 +282,8 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
             extras_amount: Number(extraAmount || 0),
             apply_tax: includeTax,
             tax_rate: resolvedTaxRate,
-            actor_id: authData?.user?.id || null,
-            actor_email: authData?.user?.email || null
+            actor_id: actorId || null,
+            actor_email: actorEmail || null
           }
         });
       } catch {}
@@ -267,7 +294,7 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
     } catch (err: any) {
       console.error('Extension Error:', err);
       try {
-        const { data: authData } = await supabase.auth.getUser();
+        const { actorId, actorEmail } = await ensureActorLoaded();
         await supabase.from('system_events').insert({
           event_type: 'booking_extend_failed',
           booking_id: booking.id,
@@ -275,7 +302,7 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
           customer_id: booking.customer_id,
           hotel_id: booking.hotel_id || null,
           message: `فشل تمديد الحجز ${extendText}`,
-          created_by: authData?.user?.id || null,
+          created_by: actorId || null,
           payload: {
             booking_id: booking.id,
             period_start: previousEndDate,
@@ -289,8 +316,8 @@ export default function ExtendBookingModal({ isOpen, onClose, booking, onSuccess
             apply_tax: includeTax,
             tax_rate: resolvedTaxRate,
             error: String(err?.message || err || 'خطأ غير معروف'),
-            actor_id: authData?.user?.id || null,
-            actor_email: authData?.user?.email || null
+            actor_id: actorId || null,
+            actor_email: actorEmail || null
           }
         });
       } catch {}

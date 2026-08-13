@@ -94,11 +94,36 @@ export default function BookingDetails({ booking, transactions: initialTransacti
   const [delayDays, setDelayDays] = useState<number>(1);
   const canAdminEditDates = isAdmin && ['pending_deposit', 'confirmed', 'checked_in'].includes(booking.status);
 
+  const actorCacheRef = useRef<{ actorId: string | null; actorEmail: string | null; promise: Promise<void> | null }>({ actorId: null, actorEmail: null, promise: null });
+  const ensureActorLoaded = async (): Promise<{ actorId: string | null; actorEmail: string | null }> => {
+    if (actorCacheRef.current.actorId || actorCacheRef.current.promise) {
+      if (actorCacheRef.current.promise) await actorCacheRef.current.promise;
+      return { actorId: actorCacheRef.current.actorId, actorEmail: actorCacheRef.current.actorEmail };
+    }
+    actorCacheRef.current.promise = (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const sessionUser = sessionData?.session?.user ?? null;
+        if (sessionUser?.id) {
+          actorCacheRef.current.actorId = sessionUser.id;
+          actorCacheRef.current.actorEmail = sessionUser.email ?? null;
+          return;
+        }
+        const { data: authData } = await supabase.auth.getUser();
+        actorCacheRef.current.actorId = authData?.user?.id ?? null;
+        actorCacheRef.current.actorEmail = authData?.user?.email ?? null;
+      } catch {
+        actorCacheRef.current.actorId = null;
+        actorCacheRef.current.actorEmail = null;
+      }
+    })();
+    await actorCacheRef.current.promise;
+    return { actorId: actorCacheRef.current.actorId, actorEmail: actorCacheRef.current.actorEmail };
+  };
+
   const logSystemEvent = async (args: { event_type: string; message: string; payload?: any; created_by?: string | null; booking_id?: string | null; unit_id?: string | null; customer_id?: string | null; hotel_id?: string | null }) => {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const actorId = args.created_by ?? authData?.user?.id ?? null;
-      const actorEmail = authData?.user?.email ?? null;
+      const { actorId, actorEmail } = args.created_by ? { actorId: args.created_by, actorEmail: null } : await ensureActorLoaded();
       await supabase.from('system_events').insert({
         event_type: args.event_type,
         booking_id: args.booking_id ?? booking.id,
@@ -540,8 +565,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
     setTerminateError('');
     setTerminateBusy(true);
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const actorId = authData?.user?.id || null;
+      const { actorId } = await ensureActorLoaded();
       const subtotal = Number(terminateSubtotal || 0);
       const discount = Number(terminateDiscount || 0);
       const extras = Number(terminateExtras || 0);
@@ -671,9 +695,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
 
     try {
       setEjarUploadBusy(true);
-      const { data: authData } = await supabase.auth.getUser();
-      const actorId = authData?.user?.id || null;
-      const actorEmail = authData?.user?.email || null;
+      const { actorId, actorEmail } = await ensureActorLoaded();
       if (!actorId) {
         alert('يجب تسجيل الدخول لتنفيذ العملية.');
         return;
@@ -1927,7 +1949,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
       if (txnError) throw txnError;
 
       try {
-        const { data: { user: actor } } = await supabase.auth.getUser();
+        const { actorId, actorEmail } = await ensureActorLoaded();
         await supabase.from('system_events').insert({
           event_type: 'invoice_posted',
           booking_id: booking.id,
@@ -1935,15 +1957,15 @@ export default function BookingDetails({ booking, transactions: initialTransacti
           unit_id: booking.unit_id,
           hotel_id: booking.hotel_id || null,
           message: `ترحيل الفاتورة ${updatedInvoice.invoice_number}`,
-          created_by: actor?.id || null,
+          created_by: actorId || null,
           payload: {
             invoice_id: updatedInvoice.id,
             invoice_number: updatedInvoice.invoice_number,
             invoice_date: today,
             total_amount: Number(updatedInvoice.total_amount || 0),
             tax_amount: Number(updatedInvoice.tax_amount || 0),
-            actor_id: actor?.id || null,
-            actor_email: actor?.email || null
+            actor_id: actorId || null,
+            actor_email: actorEmail || null
           }
         });
       } catch {}
@@ -2384,7 +2406,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
       if (error) throw error;
 
       try {
-        const { data: { user: actor } } = await supabase.auth.getUser();
+        const { actorId, actorEmail } = await ensureActorLoaded();
         await supabase.from('system_events').insert({
           event_type: 'invoice_updated',
           booking_id: booking.id,
@@ -2392,11 +2414,11 @@ export default function BookingDetails({ booking, transactions: initialTransacti
           unit_id: booking.unit_id,
           hotel_id: booking.hotel_id || null,
           message: `تعديل فاتورة ${invoiceNumberEdit.trim()}`,
-          created_by: actor?.id || null,
+          created_by: actorId || null,
           payload: {
             invoice_id: editingInvoice.id,
-            actor_id: actor?.id || null,
-            actor_email: actor?.email || null,
+            actor_id: actorId || null,
+            actor_email: actorEmail || null,
             old_invoice: {
               invoice_number: editingInvoice.invoice_number,
               invoice_date: editingInvoice.invoice_date,
@@ -2623,11 +2645,11 @@ export default function BookingDetails({ booking, transactions: initialTransacti
 
     setIsChangingUnit(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { actorId } = await ensureActorLoaded();
       const { data, error } = await supabase.rpc('change_booking_unit', {
         p_booking_id: booking.id,
         p_new_unit_id: selectedNewUnitId,
-        p_actor_id: user?.id || null
+        p_actor_id: actorId || null
       });
 
       if (error) throw error;
@@ -2638,7 +2660,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
           message: managerReason
             ? `تغيير الوحدة للحجز رقم ${String(booking.id || '').slice(0, 8).toUpperCase()} - السبب: ${managerReason}`
             : `تغيير الوحدة للحجز رقم ${String(booking.id || '').slice(0, 8).toUpperCase()}`,
-          created_by: user?.id || null,
+          created_by: actorId || null,
           payload: {
             old_unit_id: booking.unit_id || null,
             old_unit_number: booking.unit?.unit_number || null,
@@ -2657,7 +2679,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
           message: managerReason
             ? `فشل تغيير الوحدة للحجز رقم ${String(booking.id || '').slice(0, 8).toUpperCase()} - السبب: ${managerReason}`
             : `فشل تغيير الوحدة للحجز رقم ${String(booking.id || '').slice(0, 8).toUpperCase()}`,
-          created_by: user?.id || null,
+          created_by: actorId || null,
           payload: {
             old_unit_id: booking.unit_id || null,
             old_unit_number: booking.unit?.unit_number || null,
@@ -2823,13 +2845,13 @@ export default function BookingDetails({ booking, transactions: initialTransacti
     
     setIsIssuing(true);
     try {
-      const { data: { user: actor } } = await supabase.auth.getUser();
+      const { actorId } = await ensureActorLoaded();
 
       const { data: res2, error: err2 } = await supabase.rpc('issue_invoice_for_booking_v2', {
         p_booking_id: booking.id,
         p_invoice_date: new Date().toISOString().split('T')[0],
         p_paid_amount: 0,
-        p_actor_id: actor?.id || null
+        p_actor_id: actorId || null
       });
 
       if (!err2 && res2?.success && res2?.invoice_id) {
@@ -2881,13 +2903,13 @@ let activeInvoice = (invoices || [])
 
 // 2) إذا لا توجد فاتورة: أنشئ مسودة بالمنطق الجديد
 if (!activeInvoice) {
-  const { data: { user: actor } } = await supabase.auth.getUser();
+  const { actorId } = await ensureActorLoaded();
 
   const { data: createRes, error: createErr } = await supabase.rpc('issue_invoice_for_booking_v2', {
     p_booking_id: booking.id,
     p_invoice_date: new Date().toISOString().split('T')[0],
     p_paid_amount: 0,
-    p_actor_id: actor?.id || null
+    p_actor_id: actorId || null
   });
 
   if (createErr) throw createErr;
@@ -2923,7 +2945,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
         }
 
         try {
-          const { data: { user } } = await supabase.auth.getUser();
+          const { actorId, actorEmail } = await ensureActorLoaded();
           const message = `تم تسجيل الدخول للحجز رقم ${booking.id.slice(0, 8).toUpperCase()} للعميل ${booking.customer?.full_name || ''} في الوحدة ${booking.unit?.unit_number || ''} من ${booking.check_in} إلى ${booking.check_out}`;
           await supabase.from('system_events').insert({
             event_type: 'check_in',
@@ -2933,8 +2955,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             hotel_id: booking.hotel_id || null,
             message,
             payload: {
-              actor_id: user?.id || null,
-              actor_email: user?.email || null,
+              actor_id: actorId || null,
+              actor_email: actorEmail || null,
               invoice_generated: true
             }
           });
@@ -3066,7 +3088,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
         }
 
         try {
-          const { data: { user } } = await supabase.auth.getUser();
+          const { actorId, actorEmail } = await ensureActorLoaded();
           const message = `تم تسجيل الخروج للحجز رقم ${booking.id.slice(0, 8).toUpperCase()} للعميل ${booking.customer?.full_name || ''} من الوحدة ${booking.unit?.unit_number || ''}`;
           await supabase.from('system_events').insert({
             event_type: 'check_out',
@@ -3076,8 +3098,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             hotel_id: booking.hotel_id || null,
             message,
             payload: {
-              actor_id: user?.id || null,
-              actor_email: user?.email || null,
+              actor_id: actorId || null,
+              actor_email: actorEmail || null,
               check_in: booking.check_in,
               check_out: booking.check_out
             }
@@ -3506,7 +3528,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
       }
 
       try {
-        const { data: { user: actor } } = await supabase.auth.getUser();
+        const { actorId, actorEmail } = await ensureActorLoaded();
         const method = paymentMethods.find((pm: any) => pm.id === paymentMethodId);
         const selectedInvoice = selectedInvoiceId ? invoices.find((i: any) => i.id === selectedInvoiceId) : null;
         await supabase.from('system_events').insert({
@@ -3518,7 +3540,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           message: selectedInvoice
             ? `تسجيل سداد للفاتورة ${selectedInvoice.invoice_number || ''}`.trim()
             : 'تسجيل دفعة سداد للحجز',
-          created_by: actor?.id || null,
+          created_by: actorId || null,
           payload: {
             payment_id: createdPaymentId,
             amount: numAmount,
@@ -3532,8 +3554,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             description: fullDescription,
             transaction_type: type,
             allocations: allocationSummary,
-            actor_id: actor?.id || null,
-            actor_email: actor?.email || null
+            actor_id: actorId || null,
+            actor_email: actorEmail || null
           }
         });
       } catch (eventError) {

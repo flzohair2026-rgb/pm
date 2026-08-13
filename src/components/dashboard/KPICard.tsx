@@ -1,6 +1,8 @@
 import React from 'react';
 import { ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 interface KPICardProps {
   title: string;
@@ -13,78 +15,127 @@ interface KPICardProps {
   tone?: 'neutral' | 'emerald';
 }
 
-export const KPICard = ({ 
-  title, 
-  value, 
-  change, 
-  trend, 
-  icon: Icon, 
+const trendBadgeVariant: Record<'up' | 'down' | 'neutral', 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  up: 'default',
+  down: 'destructive',
+  neutral: 'secondary'
+};
+
+const iconColorClasses: Record<NonNullable<KPICardProps['color']>, string> = {
+  blue: 'bg-sky-100 text-sky-700 ring-sky-200',
+  green: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
+  purple: 'bg-indigo-100 text-indigo-700 ring-indigo-200',
+  orange: 'bg-amber-100 text-amber-700 ring-amber-200'
+};
+
+export const KPICard = ({
+  title,
+  value,
+  change,
+  trend,
+  icon: Icon,
   description,
   color = 'blue',
   tone = 'neutral'
 }: KPICardProps) => {
-  
-  const colorStyles = {
-    blue: "bg-blue-50 text-blue-600 ring-blue-100",
-    green: "bg-emerald-50 text-emerald-600 ring-emerald-100",
-    purple: "bg-purple-50 text-purple-600 ring-purple-100",
-    orange: "bg-orange-50 text-orange-600 ring-orange-100",
-  };
-
-  const trendColor = trend === 'up' ? "text-emerald-600" : trend === 'down' ? "text-rose-600" : "text-gray-500";
   const TrendIcon = trend === 'up' ? ArrowUpRight : trend === 'down' ? ArrowDownRight : Minus;
-
+  const showChange = change && change !== '-' && change !== '0%';
   const isEmerald = tone === 'emerald';
 
   return (
-    <div
+    <Card
       className={cn(
-        "group relative overflow-hidden p-4 sm:p-6 rounded-2xl shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300",
+        'relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 p-0',
         isEmerald
-          ? "bg-gradient-to-br from-emerald-700 via-emerald-800 to-emerald-900 text-white"
-          : "bg-white/90 backdrop-blur-sm ring-1 ring-emerald-100/70 hover:ring-emerald-200/70"
+          ? 'bg-gradient-to-br from-emerald-700 via-emerald-800 to-emerald-900 text-white border-0 ring-0 [--card:transparent] [--card-foreground:var(--white)] [--muted-foreground:color-mix(in_oklch,white_75%,transparent)]'
+          : 'bg-card/90 backdrop-blur-sm ring-emerald-100/70 hover:ring-emerald-200/70'
       )}
     >
+      {/* خلفية أيقونة زخرفية كبيرة */}
       <div
+        aria-hidden
         className={cn(
-          "absolute top-0 right-0 p-3 sm:p-4 transition-opacity transform group-hover:scale-110 duration-500",
-          isEmerald ? "opacity-10 group-hover:opacity-15" : "opacity-5 group-hover:opacity-10"
+          'pointer-events-none absolute top-0 end-0 p-3 sm:p-4 transition-transform duration-500 group-hover/card:scale-110',
+          isEmerald ? 'opacity-10 group-hover/card:opacity-15' : 'opacity-5 group-hover/card:opacity-10'
         )}
       >
-        <Icon size={80} />
-      </div>
-      
-      <div className="relative flex justify-between items-start mb-3 sm:mb-4">
-        <div
-          className={cn(
-            "p-2.5 sm:p-3 rounded-xl ring-1 ring-inset transition-colors",
-            isEmerald ? "bg-white/10 text-white ring-white/20" : colorStyles[color]
-          )}
-        >
-          <Icon size={22} className={cn("stroke-[1.5] sm:w-[24px] sm:h-[24px]", isEmerald && "text-white")} />
-        </div>
-        {change && change !== '-' && change !== '0%' && (
-          <div
-            className={cn(
-              "flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full ring-1",
-              isEmerald ? "bg-white/10 ring-white/20 text-white" : cn("bg-white/80 ring-emerald-100/70", trendColor)
-            )}
-          >
-            <TrendIcon size={14} />
-            <span>{change}</span>
-          </div>
-        )}
+        <Icon size={80} strokeWidth={1.2} className={cn(isEmerald ? 'text-white' : 'text-foreground')} />
       </div>
 
-      <div className="relative">
-        <h3 className={cn("text-2xl sm:text-3xl font-bold tracking-tight font-sans mb-1", isEmerald ? "text-white" : "text-gray-900")}>
+      <CardHeader className="relative pb-0 pt-5 sm:pt-6">
+        <div className="flex items-center justify-start">
+          <div
+            className={cn(
+              'inline-flex items-center justify-center w-11 h-11 sm:w-12 sm:h-12 rounded-xl ring-1 ring-inset shadow-sm shrink-0',
+              isEmerald
+                ? 'bg-white/10 text-white ring-white/20'
+                : iconColorClasses[color]
+            )}
+          >
+            <Icon
+              size={22}
+              strokeWidth={1.8}
+              className={cn(
+                'sm:w-[24px] sm:h-[24px]',
+                isEmerald && 'text-white'
+              )}
+            />
+          </div>
+        </div>
+
+        {showChange && (
+          <CardAction>
+            <Badge
+              variant={trendBadgeVariant[trend]}
+              className={cn(
+                'inline-flex items-center gap-1 text-[11px] h-6 rounded-full px-2.5',
+                isEmerald && [
+                  'bg-white/10 text-white ring-white/20 border-0 [color:var(--white)]',
+                  trend === 'up' && 'bg-emerald-400/20',
+                  trend === 'down' && 'bg-rose-400/25 text-rose-100'
+                ],
+                !isEmerald && [
+                  trend === 'up' && 'bg-emerald-50 text-emerald-700 ring-emerald-200/60 border-emerald-200',
+                  trend === 'down' && 'bg-rose-50 text-rose-700 ring-rose-200/60 border-rose-200',
+                  trend === 'neutral' && 'bg-slate-100 text-slate-600 border-slate-200'
+                ]
+              )}
+            >
+              <TrendIcon size={13} />
+              <span className="font-bold">{change}</span>
+            </Badge>
+          </CardAction>
+        )}
+      </CardHeader>
+
+      <CardContent className="relative pt-3">
+        <div
+          aria-live="polite"
+          className={cn(
+            'text-3xl sm:text-4xl font-black tracking-tight leading-tight mb-1',
+            isEmerald ? 'text-white' : 'text-foreground'
+          )}
+        >
           {value}
-        </h3>
-        <p className={cn("text-[11px] sm:text-sm font-medium mb-1", isEmerald ? "text-emerald-100" : "text-gray-500")}>{title}</p>
-        <p className={cn("text-[10px] sm:text-xs font-light leading-4", isEmerald ? "text-emerald-200/90" : "text-gray-400")}>
+        </div>
+        <CardTitle
+          asChild
+          className={cn(
+            'text-[12px] sm:text-sm font-semibold mb-0.5 mt-0 leading-snug',
+            isEmerald ? 'text-white' : 'text-foreground'
+          )}
+        >
+          <div>{title}</div>
+        </CardTitle>
+        <CardDescription
+          className={cn(
+            'text-[11px] sm:text-xs font-medium leading-4 mt-1',
+            isEmerald ? 'text-white/80' : 'text-muted-foreground'
+          )}
+        >
           {description}
-        </p>
-      </div>
-    </div>
+        </CardDescription>
+      </CardContent>
+    </Card>
   );
 };

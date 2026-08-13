@@ -24,7 +24,8 @@ import {
   Building2,
     Layers,
     ArrowLeftRight,
-    History as HistoryIcon
+    History as HistoryIcon,
+    Shield as ActivityShieldIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -197,6 +198,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <>
                 <SidebarItem icon={UserCog} label={t('المستخدمين والصلاحيات', 'Users & Roles')} href="/admin/users" onClick={onNavigate} />
                 <SidebarItem icon={HistoryIcon} label={t('سجل مراقبة النظام', 'Audit Log')} href="/admin/audit-log" onClick={onNavigate} />
+                <SidebarItem icon={ActivityShieldIcon} label={t('سجل نشاط النظام', 'Activity Log')} href="/admin/audit" onClick={onNavigate} />
               </>
             )}
             

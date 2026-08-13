@@ -24,6 +24,7 @@ import {
   ArrowLeftRight,
   UserCog,
   History as HistoryIcon,
+  Shield as ActivityShieldIcon,
   Languages
 } from 'lucide-react';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -175,6 +176,7 @@ export default function FloatingSidebar() {
           if (isAdmin) {
             tabs.push({ href: '/admin/users', label: t('الموظفين', 'Users'), icon: UserCog });
             tabs.push({ href: '/admin/audit-log', label: t('سجل المراقبة', 'Audit'), icon: HistoryIcon });
+            tabs.push({ href: '/admin/audit', label: t('سجل النشاط', 'Activity'), icon: ActivityShieldIcon });
             tabs.push({ href: '/settings', label: t('الإعدادات', 'Settings'), icon: Settings });
           }
         }

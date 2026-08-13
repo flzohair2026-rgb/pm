@@ -61,7 +61,21 @@ export function CustomerModal({ isOpen, onClose, onSuccess, customerToEdit }: Cu
 
   useEffect(() => {
     if (customerToEdit) {
-      setFormData(customerToEdit);
+      const sanitized: Partial<Customer> = {
+        id: customerToEdit.id,
+        full_name: customerToEdit.full_name,
+        customer_type: customerToEdit.customer_type,
+        phone: customerToEdit.phone,
+        email: customerToEdit.email,
+        national_id: customerToEdit.national_id,
+        nationality: customerToEdit.nationality,
+        commercial_register: customerToEdit.commercial_register,
+        tax_number: customerToEdit.tax_number,
+        address: customerToEdit.address,
+        details: customerToEdit.details,
+        created_at: customerToEdit.created_at,
+      };
+      setFormData(sanitized);
       setNationalityQuery(customerToEdit.nationality || 'Saudi Arabia');
     } else {
       setFormData({
@@ -121,11 +135,20 @@ export function CustomerModal({ isOpen, onClose, onSuccess, customerToEdit }: Cu
       }
 
       const detailsLine = documentType ? `نوع الوثيقة: ${documentType}` : '';
-      const payload = {
-        ...formData,
-        nationality: formData.customer_type === 'individual' ? formData.nationality : null,
+      const sanitizedPayload: Partial<Customer> & { company_name?: unknown; broker_name?: unknown; broker_id?: unknown; platform_name?: unknown; country?: unknown } = {
+        full_name: formData.full_name,
+        customer_type: formData.customer_type as any,
+        phone: formData.phone,
+        email: formData.email,
+        national_id: formData.national_id,
+        nationality: formData.customer_type === 'individual' ? formData.nationality : undefined,
+        commercial_register: formData.commercial_register,
+        tax_number: formData.tax_number,
+        address: formData.address,
         details: [formData.details?.trim(), detailsLine].filter(Boolean).join('\n')
       };
+
+      const payload = sanitizedPayload;
 
       if (customerToEdit) {
         const { error: updateError } = await supabase

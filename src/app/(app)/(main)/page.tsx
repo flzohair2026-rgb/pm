@@ -13,27 +13,28 @@ import {
   Zap,
   CreditCard,
   FileText,
-  Sparkles,
   Layers
 } from 'lucide-react';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase-server';
 import { KPICard } from '@/components/dashboard/KPICard';
-import { RoomStatusGrid, Unit } from '@/components/dashboard/RoomStatusGrid';
+import { Unit } from '@/components/dashboard/RoomStatusGrid';
 import RoomStatusWithDate from '@/components/dashboard/RoomStatusWithDate';
 import { RecentBookingsTable, Booking } from '@/components/dashboard/RecentBookingsTable';
 import { RevenueChart } from '@/components/dashboard/RevenueChart';
 import { formatDistanceToNow } from 'date-fns';
 import { ar, enUS } from 'date-fns/locale';
 import GlobalCustomerSearch from '@/components/dashboard/GlobalCustomerSearch';
+import { WelcomeSummary, WelcomeSummaryData, WelcomeChip } from '@/components/dashboard/WelcomeSummary';
 
 export const runtime = 'edge';
 
 export default async function Home() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  let role: 'admin' | 'manager' | 'receptionist' | 'accountant' | 'marketing' | null = 'receptionist';
+  let role: 'admin' | 'manager' | 'receptionist' | 'accountant' | 'marketing' | 'housekeeping' | null = 'receptionist';
   let defaultHotelId: string | null = null;
   if (user?.id) {
     const { data: prof } = await supabase
@@ -43,6 +44,9 @@ export default async function Home() {
       .single();
     role = (prof?.role as any) || 'receptionist';
     defaultHotelId = (prof as any)?.default_hotel_id ? String((prof as any).default_hotel_id) : null;
+  }
+  if (role === 'housekeeping') {
+    redirect('/cleaning');
   }
   const isReceptionist = role === 'receptionist';
   const isMarketing = role === 'marketing';
@@ -65,30 +69,412 @@ export default async function Home() {
     maximumFractionDigits: 0
   });
   const timeAgoLocale = language === 'en' ? enUS : ar;
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
+  const nextDayStr = (() => {
+    const base = new Date(`${todayStr}T00:00:00`);
+    base.setDate(base.getDate() + 1);
+    return base.toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
+  })();
+  const last7Days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    return d.toISOString().split('T')[0];
+  }).reverse();
+  const last7Start = last7Days[0];
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfMonthStr = startOfMonth.toISOString().split('T')[0];
 
-  // 1. Fetch Units Status
-  const unitsQ = supabase
+  // ==========================================
+  // BATCH 1: المستقل عن الفنادق — يعمل مباشرة
+  // ==========================================
+  const unitsBase = supabase
     .from('units')
     .select('id, unit_number, status, unit_type_id, unit_type:unit_types(id, name, annual_price, daily_price, price_per_year)')
     .order('unit_number');
-  const { data: unitsData } = selectedHotelId !== 'all' ? await unitsQ.eq('hotel_id', selectedHotelId) : await unitsQ;
-
-  const typeIds = Array.from(new Set((unitsData || []).map((u: any) => u.unit_type_id).filter(Boolean)));
-  const typeMap = new Map<string, any>();
-  if (typeIds.length > 0) {
-    const { data: typesData } = await supabase
-      .from('unit_types')
-      .select('id, name, annual_price, daily_price, price_per_year')
-      .in('id', typeIds);
-    (typesData || []).forEach((t: any) => typeMap.set(t.id, t));
-  }
-  // Fetch active bookings (Checked-in or Confirmed/Booked) to get guest names
-  const activeBookingsQ = supabase
+  const activeBookingsBase = supabase
+    .from('bookings')
+    .select('id, unit_id, customers(full_name, phone), status')
+    .in('status', ['checked_in', 'confirmed']);
+  const arrivalsBase = supabase
     .from('bookings')
     .select('id, unit_id, customers(full_name, phone)')
-    .in('status', ['checked_in', 'confirmed']);
-  const { data: activeBookings } = selectedHotelId !== 'all' ? await activeBookingsQ.eq('hotel_id', selectedHotelId) : await activeBookingsQ;
+    .eq('status', 'confirmed')
+    .eq('check_in', todayStr);
+  const departuresBase = supabase
+    .from('bookings')
+    .select('id, unit_id, customers(full_name, phone)')
+    .in('status', ['checked_in', 'confirmed'])
+    .eq('check_out', todayStr)
+    .lte('check_in', todayStr);
+  const overdueBase = supabase
+    .from('bookings')
+    .select('id, unit_id, customers(full_name, phone)')
+    .eq('status', 'checked_in')
+    .lt('check_out', todayStr);
+  const recentBase = supabase
+    .from('bookings')
+    .select(`
+      id,
+      check_in,
+      status,
+      total_price,
+      units (unit_number),
+      customers (full_name)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  const activeCheckedInBase = supabase
+    .from('bookings')
+    .select('id, unit_id')
+    .eq('status', 'checked_in')
+    .lt('check_in', nextDayStr)
+    .gt('check_out', todayStr);
+  const pendingArrivalsBase = supabase
+    .from('bookings')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'confirmed')
+    .eq('check_in', todayStr);
+  const delayedBase = supabase
+    .from('bookings')
+    .select('id, hotel_id, customer_id, customers(full_name), unit_id, units(unit_number, hotel_id)')
+    .eq('status', 'confirmed')
+    .lt('check_in', todayStr);
+  const checkoutBase = supabase
+    .from('bookings')
+    .select('id, hotel_id, customer_id, customers(full_name), unit_id, units(unit_number, hotel_id)')
+    .eq('status', 'checked_in')
+    .eq('check_out', todayStr);
+  const notifBase = supabase
+    .from('system_events')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(4);
+  const in1 = new Date(`${todayStr}T00:00:00`);
+  in1.setDate(in1.getDate() + 1);
+  const in3 = new Date(`${todayStr}T00:00:00`);
+  in3.setDate(in3.getDate() + 3);
+  const expiringStart = in1.toISOString().split('T')[0];
+  const expiringEnd = in3.toISOString().split('T')[0];
+  const latePaymentsBase = supabase
+    .from('invoices')
+    .select('id, booking_id, due_date, hotel_id, booking:bookings(unit_id, units(unit_number))')
+    .in('status', ['posted'])
+    .not('due_date', 'is', null)
+    .lt('due_date', todayStr)
+    .order('due_date', { ascending: true })
+    .limit(12);
+  const expiringBase = supabase
+    .from('bookings')
+    .select('id, unit_id, check_out, hotel_id, units(unit_number)')
+    .in('status', ['checked_in', 'confirmed'])
+    .gte('check_out', expiringStart)
+    .lte('check_out', expiringEnd)
+    .order('check_out', { ascending: true })
+    .limit(12);
 
+  const applyHotel = <Q extends { eq: (k: string, v: any) => Q }>(q: Q, hid: string) => hid !== 'all' ? q.eq('hotel_id', hid) : q;
+
+  // ==========================================
+  // BATCH 2: تشغيل كل الاستعلامات معًا بالتوازي (Parallel Query Batching)
+  // ==========================================
+  const [
+    unitsRes,
+    activeBookingsRes,
+    arrivalsRes,
+    departuresRes,
+    overdueRes,
+    bookingsRes,
+    activeCheckedInRes,
+    pendingArrivalsRes,
+    delayedRes,
+    checkoutRes,
+    notificationsRes,
+    hotelRevenueRes,
+    latePaymentsRes,
+    expiringRes
+  ] = await Promise.all([
+    applyHotel(unitsBase, selectedHotelId),
+    applyHotel(activeBookingsBase, selectedHotelId),
+    applyHotel(arrivalsBase, selectedHotelId),
+    applyHotel(departuresBase, selectedHotelId),
+    applyHotel(overdueBase, selectedHotelId),
+    applyHotel(recentBase, selectedHotelId),
+    applyHotel(activeCheckedInBase, selectedHotelId),
+    applyHotel(pendingArrivalsBase, selectedHotelId),
+    applyHotel(delayedBase, selectedHotelId),
+    applyHotel(checkoutBase, selectedHotelId),
+    // الإشعارات: فقط لو كان الفندق محددًا نفلتر (وإلا كل الفنادق)
+    (async () => {
+      try {
+        if (selectedHotelId !== 'all') return await notifBase.eq('hotel_id', selectedHotelId);
+        return await notifBase;
+      } catch { return { data: [], error: null } as any; }
+    })(),
+    // الإيرادات والرسوم البيانية — تفرّع حسب الفندق
+    (async () => {
+      try {
+        if (selectedHotelId !== 'all') {
+          const monthP = supabase
+            .from('payments')
+            .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
+            .eq('status', 'posted')
+            .gte('payment_date', startOfMonthStr)
+            .eq('invoice.booking.hotel_id', selectedHotelId);
+          const weekP = supabase
+            .from('payments')
+            .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
+            .eq('status', 'posted')
+            .gte('payment_date', last7Start)
+            .lte('payment_date', todayStr)
+            .eq('invoice.booking.hotel_id', selectedHotelId);
+          const [m, w] = await Promise.all([monthP, weekP]);
+          return { mode: 'per-hotel', monthData: m.data, weekData: w.data } as const;
+        }
+        const rpcRes = await supabase.rpc('get_cash_flow_stats');
+        if (!rpcRes.error && rpcRes.data) {
+          return { mode: 'rpc', data: rpcRes.data } as const;
+        }
+        const rev = await supabase
+          .from('revenue_schedules')
+          .select('amount, recognition_date')
+          .gte('recognition_date', startOfMonthStr);
+        return { mode: 'fallback', data: rev.data } as const;
+      } catch (e: any) {
+        return { mode: 'err' as const, msg: String(e?.message || e) };
+      }
+    })(),
+    // ملخص الترحيب — بنفس الدفعة المتوازية لا تُضيف وقتًا
+    applyHotel(latePaymentsBase, selectedHotelId),
+    applyHotel(expiringBase, selectedHotelId)
+  ]);
+
+  const { data: unitsData } = unitsRes as any;
+  const { data: activeBookings } = activeBookingsRes as any;
+  const { data: arrivalsToday } = arrivalsRes as any;
+  const { data: departuresToday } = departuresRes as any;
+  const { data: overdueCheckouts } = overdueRes as any;
+  const { data: bookingsData } = bookingsRes as any;
+  const { data: activeCheckedInFinal } = activeCheckedInRes as any;
+  const { count: pendingArrivalsCount } = pendingArrivalsRes as any;
+  const { data: delayedBookings } = delayedRes as any;
+  const { data: checkoutBookings } = checkoutRes as any;
+  const { data: notifications } = notificationsRes as any;
+  const { data: latePaymentsRaw } = latePaymentsRes as any;
+  const { data: expiringRaw } = expiringRes as any;
+
+  let wsSeq = 0;
+  const nid = (prefix = '') => `${prefix || 'w'}${Date.now().toString(36)}${(++wsSeq).toString(36)}`;
+
+  const chipUnit = (b: any): string =>
+    b.units?.unit_number ??
+    (Array.isArray(b.units) ? b.units[0]?.unit_number : undefined) ??
+    (Array.isArray((b.booking as any)?.units)
+      ? (b.booking as any).units?.[0]?.unit_number
+      : (b.booking as any)?.units?.unit_number) ??
+    '';
+
+  const daysBetween = (aISO: string, bISO: string) => {
+    const ax = new Date(`${aISO}T00:00:00`).getTime();
+    const bx = new Date(`${bISO}T00:00:00`).getTime();
+    return Math.round((ax - bx) / 86400000);
+  };
+
+  const riyadhHour = (() => {
+    try {
+      const parts = new Date().toLocaleTimeString('en-US', {
+        timeZone: 'Asia/Riyadh',
+        hour: '2-digit',
+        hour12: false
+      });
+      return Number(parts.split(':')[0]);
+    } catch {
+      return new Date().getHours();
+    }
+  })();
+
+  const profileName = (() => {
+    try {
+      const raw = (user as any)?.user_metadata?.full_name || (user as any)?.user_metadata?.name;
+      if (raw) return raw;
+    } catch {}
+    return user?.email?.split('@')[0] || 'مستخدم';
+  })();
+
+  const late_payments: WelcomeChip[] = (latePaymentsRaw || [])
+    .filter((inv: any) => inv && inv.booking_id && chipUnit(inv))
+    .map((inv: any) => ({
+      id: nid(`inv${inv.id}_`),
+      unit_number: chipUnit(inv),
+      days: inv.due_date ? Math.max(0, -daysBetween(inv.due_date, todayStr)) : undefined
+    }));
+
+  const expiring_bookings: WelcomeChip[] = (expiringRaw || [])
+    .filter((b: any) => b && chipUnit(b))
+    .map((b: any) => ({
+      id: nid(`exp${b.id}_`),
+      unit_number: chipUnit(b),
+      days: b.check_out ? Math.max(0, daysBetween(b.check_out, todayStr)) : undefined
+    }));
+
+  const overdue_chips = (arr: any[], dateKey: 'check_out' | 'check_in', prefix: string): WelcomeChip[] =>
+    (arr || [])
+      .filter((b: any) => b && chipUnit(b))
+      .map((b: any) => ({
+        id: nid(`${prefix}${b.id}_`),
+        unit_number: chipUnit(b),
+        days: b[dateKey] ? Math.max(0, -daysBetween(b[dateKey], todayStr)) : undefined
+      }));
+
+  const today_chips = (arr: any[], prefix: string): WelcomeChip[] =>
+    (arr || [])
+      .filter((b: any) => b && chipUnit(b))
+      .map((b: any) => ({
+        id: nid(`${prefix}${b.id}_`),
+        unit_number: chipUnit(b)
+      }));
+
+  const welcomeData: WelcomeSummaryData = {
+    language: language as any,
+    user_name: profileName,
+    greeting_hour: riyadhHour,
+    late_payments,
+    expiring_bookings,
+    overdue_checkouts: overdue_chips(overdueCheckouts, 'check_out', 'ovr'),
+    today_checkouts: today_chips(departuresToday, 'tout'),
+    today_arrivals: today_chips(arrivalsToday, 'tin')
+  };
+
+  // ==========================================
+  // BATCH 3: الاستعلامات التابعة لـ unitsData لكنها الآن تعمل بعدها فورًا
+  // ==========================================
+  const typeIds = Array.from(new Set((unitsData || []).map((u: any) => u.unit_type_id).filter(Boolean)));
+  const unitIds = (unitsData || []).map((u: any) => u.id);
+  const [typesData, tempRes] = await Promise.all([
+    (async () => {
+      if (typeIds.length === 0) return [];
+      const { data } = await supabase
+        .from('unit_types')
+        .select('id, name, annual_price, daily_price, price_per_year')
+        .in('id', typeIds);
+      return data || [];
+    })(),
+    (async () => {
+      if (unitIds.length === 0) return [];
+      const { data } = await supabase
+        .from('temporary_reservations')
+        .select('unit_id, customer_name, reserve_date, phone')
+        .in('unit_id', unitIds)
+        .eq('reserve_date', todayStr);
+      return data || [];
+    })()
+  ]);
+  const typeMap = new Map<string, any>();
+  (typesData || []).forEach((t: any) => typeMap.set(t.id, t));
+
+  // ==========================================
+  // BATCH 4: تجهيز التذكيرات — استعلام واحد جماعي بدل حلقة N+1
+  // ==========================================
+  const reminderBookingIds = Array.from(new Set([
+    ...((delayedBookings || []).map((b: any) => b.id)),
+    ...((checkoutBookings || []).map((b: any) => b.id)),
+  ]));
+  const existingRemindersMap = new Map<string, Set<string>>();
+  if (reminderBookingIds.length > 0) {
+    try {
+      const { data: existingRem } = await supabase
+        .from('system_events')
+        .select('event_type, booking_id')
+        .in('booking_id', reminderBookingIds)
+        .in('event_type', ['check_in_reminder', 'check_out_reminder'])
+        .gte('created_at', todayStr);
+      (existingRem || []).forEach((r: any) => {
+        if (!r?.booking_id) return;
+        const s = existingRemindersMap.get(r.booking_id) || new Set();
+        s.add(r.event_type);
+        existingRemindersMap.set(r.booking_id, s);
+      });
+    } catch {}
+  }
+
+  // تنبيهات تأخر تسجيل الدخول + مواعيد الخروج — إدراج جماعي (Bulk insert)
+  const reminderInserts: any[] = [];
+  if (delayedBookings && delayedBookings.length > 0) {
+    for (const booking of delayedBookings) {
+      const hasSet = existingRemindersMap.get(booking.id);
+      if (hasSet?.has('check_in_reminder')) continue;
+      const customerName = Array.isArray(booking.customers)
+        ? booking.customers[0]?.full_name
+        : (booking.customers as any)?.full_name || 'غير معروف';
+      const msg = `تنبيه: تأخر تسجيل الدخول للحجز رقم ${String(booking.id).slice(0, 8)} للعميل ${customerName}`;
+      reminderInserts.push({
+        event_type: 'check_in_reminder',
+        booking_id: booking.id,
+        unit_id: booking.unit_id,
+        customer_id: booking.customer_id,
+        hotel_id: (booking as any)?.hotel_id || (booking.units as any)?.hotel_id,
+        message: msg
+      });
+    }
+  }
+  if (checkoutBookings && checkoutBookings.length > 0) {
+    for (const booking of checkoutBookings) {
+      const hasSet = existingRemindersMap.get(booking.id);
+      if (hasSet?.has('check_out_reminder')) continue;
+      const customerName = Array.isArray(booking.customers)
+        ? booking.customers[0]?.full_name
+        : (booking.customers as any)?.full_name || 'غير معروف';
+      const msg = `تنبيه: موعد تسجيل الخروج اليوم للحجز رقم ${String(booking.id).slice(0, 8)} للعميل ${customerName}`;
+      reminderInserts.push({
+        event_type: 'check_out_reminder',
+        booking_id: booking.id,
+        unit_id: booking.unit_id,
+        customer_id: booking.customer_id,
+        hotel_id: (booking as any)?.hotel_id || (booking.units as any)?.hotel_id,
+        message: msg
+      });
+    }
+  }
+  if (reminderInserts.length > 0) {
+    try { await supabase.from('system_events').insert(reminderInserts); } catch {}
+  }
+
+  // ==========================================
+  // إعداد الإيرادات والرسوم البيانية
+  // ==========================================
+  let totalRevenue = 0;
+  let chartData: { date: string; amount: number }[] = [];
+  if (hotelRevenueRes && hotelRevenueRes.mode === 'per-hotel') {
+    totalRevenue = (hotelRevenueRes.monthData || []).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+    chartData = last7Days.map((date) => ({
+      date: new Date(date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
+      amount:
+        (hotelRevenueRes.weekData || [])
+          .filter((p: any) => String(p.payment_date || '') === date)
+          .reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0) || 0,
+    }));
+  } else if (hotelRevenueRes && hotelRevenueRes.mode === 'rpc') {
+    totalRevenue = Number((hotelRevenueRes as any).data?.month_revenue) || 0;
+    const raw = (hotelRevenueRes as any).data?.chart_data || [];
+    chartData = raw.map((d: any) => ({
+      date: new Date(d.date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
+      amount: Number(d.amount),
+    }));
+  } else if (hotelRevenueRes && hotelRevenueRes.mode === 'fallback') {
+    const revenueData = (hotelRevenueRes as any).data || [];
+    totalRevenue = revenueData.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0) || 0;
+    chartData = last7Days.map((date) => ({
+      date: new Date(date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
+      amount:
+        revenueData
+          ?.filter((r: any) => String(r.recognition_date || '') === date)
+          .reduce((sum: number, r: any) => sum + Number(r.amount), 0) || 0,
+    }));
+  }
+
+  // ==========================================
+  // معالجة الوحدات + الإجراءات اليومية
+  // ==========================================
   const activeBookingsMap = new Map<string, { id: string; guest: string; phone?: string; status: string }>();
   activeBookings?.forEach((b: any) => {
       if (b.unit_id) {
@@ -98,8 +484,6 @@ export default async function Home() {
         const phone = Array.isArray(b.customers)
           ? b.customers[0]?.phone
           : (b.customers as any)?.phone;
-        
-        // Prioritize checked_in status if multiple bookings exist for the same unit
         const existing = activeBookingsMap.get(b.unit_id);
         if (!existing || b.status === 'checked_in') {
           activeBookingsMap.set(b.unit_id, { id: b.id, guest: guestName, phone, status: b.status });
@@ -107,76 +491,42 @@ export default async function Home() {
       }
   });
 
-  // ==========================================
-  // Fetch Today's Actions (Arrivals, Departures, Overdue)
-  // ==========================================
-  // Use Saudi Arabia timezone for accurate "today" calculation
-  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
-
-  // A. Arrivals Today (Confirmed + Check-in Today)
-  const arrivalsQ = supabase
-    .from('bookings')
-    .select('id, unit_id, customers(full_name, phone)')
-    .eq('status', 'confirmed')
-    .eq('check_in', todayStr);
-  const { data: arrivalsToday } = selectedHotelId !== 'all' ? await arrivalsQ.eq('hotel_id', selectedHotelId) : await arrivalsQ;
-
-  // B. Departures Today
-  const departuresQ = supabase
-    .from('bookings')
-    .select('id, unit_id, customers(full_name, phone)')
-    .in('status', ['checked_in', 'confirmed'])
-    .eq('check_out', todayStr)
-    .lte('check_in', todayStr);
-  const { data: departuresToday } = selectedHotelId !== 'all' ? await departuresQ.eq('hotel_id', selectedHotelId) : await departuresQ;
-
-  // C. Overdue Checkouts (Checked-in + Check-out < Today)
-  const overdueQ = supabase
-    .from('bookings')
-    .select('id, unit_id, customers(full_name, phone)')
-    .eq('status', 'checked_in')
-    .lt('check_out', todayStr);
-  const { data: overdueCheckouts } = selectedHotelId !== 'all' ? await overdueQ.eq('hotel_id', selectedHotelId) : await overdueQ;
-
   const unitActionMap = new Map<string, { action: 'arrival' | 'departure' | 'overdue', guest: string, phone?: string }>();
-
   arrivalsToday?.forEach((b: any) => {
       if(b.unit_id) {
-        const guestName = Array.isArray(b.customers) 
-            ? b.customers[0]?.full_name 
+        const guestName = Array.isArray(b.customers)
+            ? b.customers[0]?.full_name
             : (b.customers as any)?.full_name || unknownGuestName;
-        const phone = Array.isArray(b.customers) 
-            ? b.customers[0]?.phone 
+        const phone = Array.isArray(b.customers)
+            ? b.customers[0]?.phone
             : (b.customers as any)?.phone;
         unitActionMap.set(b.unit_id, { action: 'arrival', guest: guestName, phone });
       }
   });
-
   departuresToday?.forEach((b: any) => {
       if(b.unit_id) {
-        const guestName = Array.isArray(b.customers) 
-            ? b.customers[0]?.full_name 
+        const guestName = Array.isArray(b.customers)
+            ? b.customers[0]?.full_name
             : (b.customers as any)?.full_name || unknownGuestName;
-        const phone = Array.isArray(b.customers) 
-            ? b.customers[0]?.phone 
+        const phone = Array.isArray(b.customers)
+            ? b.customers[0]?.phone
             : (b.customers as any)?.phone;
         unitActionMap.set(b.unit_id, { action: 'departure', guest: guestName, phone });
       }
   });
-  
   overdueCheckouts?.forEach((b: any) => {
       if(b.unit_id) {
-        const guestName = Array.isArray(b.customers) 
-            ? b.customers[0]?.full_name 
+        const guestName = Array.isArray(b.customers)
+            ? b.customers[0]?.full_name
             : (b.customers as any)?.full_name || unknownGuestName;
-        const phone = Array.isArray(b.customers) 
-            ? b.customers[0]?.phone 
+        const phone = Array.isArray(b.customers)
+            ? b.customers[0]?.phone
             : (b.customers as any)?.phone;
         unitActionMap.set(b.unit_id, { action: 'overdue', guest: guestName, phone });
       }
   });
 
-  const units: Unit[] = (unitsData || []).map((u: any) => {
+  let units: Unit[] = (unitsData || []).map((u: any) => {
       const actionInfo = unitActionMap.get(u.id);
       const activeBooking = activeBookingsMap.get(u.id);
       const nested = (u.unit_type ?? null) as any;
@@ -184,18 +534,12 @@ export default async function Home() {
       const typeAnnual = (
         (nested?.annual_price ?? typeMap.get(u.unit_type_id)?.annual_price) ??
         (nested?.price_per_year ?? typeMap.get(u.unit_type_id)?.price_per_year) ??
-        // Fallback: derive annual from daily_price (daily * 30 * 12)
         (typeof (nested?.daily_price ?? typeMap.get(u.unit_type_id)?.daily_price) === 'number'
           ? Number(nested?.daily_price ?? typeMap.get(u.unit_type_id)?.daily_price) * 30 * 12
           : undefined)
       );
       const annualNum = typeof typeAnnual === 'number' ? Number(typeAnnual) : (typeAnnual ? Number(typeAnnual) : undefined);
-
-      // A unit is "booked" if:
-      // 1. It's available but has a confirmed arrival today (actionInfo)
-      // 2. OR it has an active confirmed booking in the system
       const displayStatus = (u.status === 'available' && (actionInfo?.action === 'arrival' || activeBooking?.status === 'confirmed')) ? 'booked' : u.status;
-
       return {
         id: u.id,
         unit_number: u.unit_number,
@@ -210,46 +554,23 @@ export default async function Home() {
         guest_phone: actionInfo?.phone || activeBooking?.phone
       };
   });
-  
-  {
-    const unitIds = (unitsData || []).map((u: any) => u.id);
-    const { data: tempRes } = await supabase
-      .from('temporary_reservations')
-      .select('unit_id, customer_name, reserve_date, phone')
-      .in('unit_id', unitIds)
-      .eq('reserve_date', todayStr);
-    if (tempRes && tempRes.length > 0) {
-      const tempMap = new Map<string, any>();
-      tempRes.forEach((t: any) => tempMap.set(t.unit_id, t));
-      for (let i = 0; i < units.length; i++) {
-        const u = units[i];
-        const t = tempMap.get(u.id);
-        if (t) {
-          units[i] = { 
-            ...u, 
-            has_temp_res: true,
-            action_guest_name: t.customer_name, 
-            guest_phone: t.phone 
-          };
-        }
+
+  if (tempRes && tempRes.length > 0) {
+    const tempMap = new Map<string, any>();
+    tempRes.forEach((t: any) => tempMap.set(t.unit_id, t));
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      const t = tempMap.get(u.id);
+      if (t) {
+        units[i] = {
+          ...u,
+          has_temp_res: true,
+          action_guest_name: t.customer_name,
+          guest_phone: t.phone
+        };
       }
     }
   }
-
-  // 2. Fetch Recent Bookings
-  const recentQ = supabase
-    .from('bookings')
-    .select(`
-      id,
-      check_in,
-      status,
-      total_price,
-      units (unit_number),
-      customers (full_name)
-    `)
-    .order('created_at', { ascending: false })
-    .limit(5);
-  const { data: bookingsData } = selectedHotelId !== 'all' ? await recentQ.eq('hotel_id', selectedHotelId) : await recentQ;
 
   const bookings: Booking[] = (bookingsData || []).map((b: any) => ({
     id: b.id,
@@ -260,194 +581,12 @@ export default async function Home() {
     total_price: Number(b.total_price) || 0
   }));
 
-  // 3. Calculate KPIs
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfMonthStr = startOfMonth.toISOString().split('T')[0];
-
-  let totalRevenue = 0;
-  let chartData: { date: string; amount: number }[] = [];
-
-  const last7Days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    return d.toISOString().split('T')[0];
-  }).reverse();
-  const last7Start = last7Days[0];
-
-  if (selectedHotelId !== 'all') {
-    const { data: monthPays } = await supabase
-      .from('payments')
-      .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
-      .eq('status', 'posted')
-      .gte('payment_date', startOfMonthStr)
-      .eq('invoice.booking.hotel_id', selectedHotelId);
-    totalRevenue = (monthPays || []).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
-
-    const { data: weekPays } = await supabase
-      .from('payments')
-      .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
-      .eq('status', 'posted')
-      .gte('payment_date', last7Start)
-      .lte('payment_date', todayStr)
-      .eq('invoice.booking.hotel_id', selectedHotelId);
-
-    chartData = last7Days.map((date) => ({
-      date: new Date(date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
-      amount:
-        (weekPays || [])
-          .filter((p: any) => String(p.payment_date || '') === date)
-          .reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0) || 0,
-    }));
-  } else {
-    // Try to get Cash Flow Stats (RPC) - Cash Basis
-    const { data: cashFlowStats, error: statsError } = await supabase.rpc('get_cash_flow_stats');
-
-    if (!statsError && cashFlowStats) {
-      totalRevenue = Number(cashFlowStats.month_revenue) || 0;
-      const rawChartData = cashFlowStats.chart_data || [];
-      chartData = rawChartData.map((d: any) => ({
-        date: new Date(d.date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
-        amount: Number(d.amount),
-      }));
-    } else {
-      const revenueQ = supabase
-        .from('revenue_schedules')
-        .select('amount, recognition_date')
-        .gte('recognition_date', startOfMonthStr);
-      const { data: revenueData } = await revenueQ;
-      totalRevenue = revenueData?.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0) || 0;
-
-      chartData = last7Days.map((date) => ({
-        date: new Date(date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
-        amount:
-          revenueData
-            ?.filter((r: any) => String(r.recognition_date || '') === date)
-            .reduce((sum: number, r: any) => sum + Number(r.amount), 0) || 0,
-      }));
-    }
-  }
-
   const totalUnitsCount = units.length;
-
-  const nextDayStr = (() => {
-    const base = new Date(`${todayStr}T00:00:00`);
-    base.setDate(base.getDate() + 1);
-    return base.toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
-  })();
-
-  let activeCheckedInQ = supabase
-    .from('bookings')
-    .select('id, unit_id')
-    .eq('status', 'checked_in')
-    .lt('check_in', nextDayStr)
-    .gt('check_out', todayStr);
-  if (selectedHotelId !== 'all') {
-    activeCheckedInQ = activeCheckedInQ.eq('hotel_id', selectedHotelId);
-  }
-  const { data: activeCheckedInFinal } = await activeCheckedInQ;
 
   const occupiedUnitIds = new Set<string>((activeCheckedInFinal || []).map((b: any) => b.unit_id).filter(Boolean));
   const occupancyRate = totalUnitsCount > 0 ? Math.round((occupiedUnitIds.size / totalUnitsCount) * 100) : 0;
-
   const activeBookingsCount = (activeCheckedInFinal || []).length;
-  
-  // Pending Arrivals (Today)
-  const pendingArrivalsQ = supabase
-    .from('bookings')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'confirmed')
-    .eq('check_in', todayStr);
-  const { count: pendingArrivalsCount } =
-    selectedHotelId !== 'all' ? await pendingArrivalsQ.eq('hotel_id', selectedHotelId) : await pendingArrivalsQ;
 
-  // ==========================================
-  // 4. Notifications & Reminders System
-  // ==========================================
-
-  // A. Generate "Delayed Check-in" Reminders
-  // Find confirmed bookings where check_in < today (Late)
-  const delayedQ = supabase
-    .from('bookings')
-    .select('id, hotel_id, customer_id, customers(full_name), unit_id, units(unit_number, hotel_id)')
-    .eq('status', 'confirmed')
-    .lt('check_in', todayStr);
-  const { data: delayedBookings } =
-    selectedHotelId !== 'all' ? await delayedQ.eq('hotel_id', selectedHotelId) : await delayedQ;
-
-  if (delayedBookings && delayedBookings.length > 0) {
-    for (const booking of delayedBookings) {
-      // Check if reminder already exists
-      const { data: existing } = await supabase
-        .from('system_events')
-        .select('id')
-        .eq('event_type', 'check_in_reminder')
-        .eq('booking_id', booking.id)
-        .gte('created_at', todayStr) // Only check if reminded today
-        .single();
-      
-      if (!existing) {
-        // Safe access to customer name
-        const customerName = Array.isArray(booking.customers) 
-          ? booking.customers[0]?.full_name 
-          : (booking.customers as any)?.full_name || 'غير معروف';
-          
-        const msg = `تنبيه: تأخر تسجيل الدخول للحجز رقم ${booking.id.slice(0, 8)} للعميل ${customerName}`;
-        await supabase.from('system_events').insert({
-          event_type: 'check_in_reminder',
-          booking_id: booking.id,
-          unit_id: booking.unit_id,
-          customer_id: booking.customer_id,
-          hotel_id: (booking as any)?.hotel_id || (booking.units as any)?.hotel_id,
-          message: msg
-        });
-      }
-    }
-  }
-
-  // B. Generate "Check-out Today" Reminders
-  // Find checked_in bookings where check_out = today
-  const checkoutQ = supabase
-    .from('bookings')
-    .select('id, hotel_id, customer_id, customers(full_name), unit_id, units(unit_number, hotel_id)')
-    .eq('status', 'checked_in')
-    .eq('check_out', todayStr);
-  const { data: checkoutBookings } =
-    selectedHotelId !== 'all' ? await checkoutQ.eq('hotel_id', selectedHotelId) : await checkoutQ;
-
-  if (checkoutBookings && checkoutBookings.length > 0) {
-    for (const booking of checkoutBookings) {
-      const { data: existing } = await supabase
-        .from('system_events')
-        .select('id')
-        .eq('event_type', 'check_out_reminder')
-        .eq('booking_id', booking.id)
-        .gte('created_at', todayStr)
-        .single();
-      
-      if (!existing) {
-        const customerName = Array.isArray(booking.customers) 
-          ? booking.customers[0]?.full_name 
-          : (booking.customers as any)?.full_name || 'غير معروف';
-
-        const msg = `تنبيه: موعد تسجيل الخروج اليوم للحجز رقم ${booking.id.slice(0, 8)} للعميل ${customerName}`;
-        await supabase.from('system_events').insert({
-          event_type: 'check_out_reminder',
-          booking_id: booking.id,
-          unit_id: booking.unit_id,
-          customer_id: booking.customer_id,
-          hotel_id: (booking as any)?.hotel_id || (booking.units as any)?.hotel_id,
-          message: msg
-        });
-      }
-    }
-  }
-
-  // C. Fetch Latest Notifications for Dashboard
-  const notifQ = supabase.from('system_events').select('*').order('created_at', { ascending: false }).limit(4);
-  const { data: notifications } =
-    selectedHotelId !== 'all' ? await notifQ.eq('hotel_id', selectedHotelId) : await notifQ;
-  
   const arrivalsCount = arrivalsToday?.length || 0;
   const departuresCount = departuresToday?.length || 0;
   const overdueCount = overdueCheckouts?.length || 0;
@@ -495,6 +634,9 @@ export default async function Home() {
 
   return (
     <div className="space-y-6 sm:space-y-8 bg-[#f8fafc] min-h-screen rounded-xl p-3 sm:p-6 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] pb-20 sm:pb-6">
+      {/* بطاقة الترحيب — أولاً عند فتح النظام */}
+      <WelcomeSummary data={welcomeData} />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-700">
         <div>

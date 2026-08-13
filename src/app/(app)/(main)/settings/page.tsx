@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { CreditCard, Settings, Users, Building, FileText } from 'lucide-react';
+import { CreditCard, Settings, Users, Building, FileText, Shield, History } from 'lucide-react';
 import { createClient } from '@/lib/supabase-server';
 import RoleGate from '@/components/auth/RoleGate';
 
@@ -61,6 +61,20 @@ export default async function SettingsPage() {
       icon: Users,
       href: '/admin/users',
       color: 'bg-green-100 text-green-600'
+    });
+    settingsGroups[0].items.push({
+      title: 'سجل مراقبة النظام',
+      description: 'Audit Logs — تتبع عمليات الدخول والجلسات والأحداث الحساسة (Admin)',
+      icon: History,
+      href: '/admin/audit-log',
+      color: 'bg-blue-50 text-blue-700 border border-blue-100'
+    });
+    settingsGroups[0].items.push({
+      title: 'سجل نشاط النظام',
+      description: 'Activity Log — عرض وتصفح سجلات التدقيق والعمليات (Admin)',
+      icon: Shield,
+      href: '/admin/audit',
+      color: 'bg-slate-900 text-white'
     });
   }
 

@@ -57,6 +57,12 @@ function LoginInner() {
           }
         });
       } catch {}
+
+      // ✅ Audit & Access Tracking (new) — fire & forget, never block login
+      try {
+        void fetch('/api/tracking/session', { method: 'POST' }).catch(() => {});
+      } catch {}
+
       router.push("/");
       router.refresh(); // Refresh to update middleware state
     } catch (err: any) {

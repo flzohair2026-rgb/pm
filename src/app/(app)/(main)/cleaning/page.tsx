@@ -45,6 +45,9 @@ interface Unit {
   hotel_id: string;
   hotel?: Hotel;
   unit_type?: UnitType;
+  // ✅ حقول إضافية اختيارية لفلترة الهاوس كيبنج (تجاوز الخروج)
+  next_action?: string | null;
+  remaining_days?: number | null;
 }
 
 interface UserProfile {
@@ -109,24 +112,45 @@ interface StaffNote {
 }
 
 const STATUS_LABELS = {
-  available: { label: { ar: 'متاح', en: 'Available' }, color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle },
-  occupied: { label: { ar: 'مشغول', en: 'Occupied' }, color: 'bg-blue-100 text-blue-700 border-blue-200', icon: BedDouble },
-  maintenance: { label: { ar: 'صيانة', en: 'Maintenance' }, color: 'bg-red-100 text-red-700 border-red-200', icon: AlertCircle },
-  cleaning: { label: { ar: 'تنظيف', en: 'Cleaning' }, color: 'bg-amber-100 text-amber-700 border-amber-200', icon: Brush },
+  available: { label: { ar: 'متاح', en: 'Available', ur: 'دستیاب', bn: 'উপলব্ধ' }, color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle },
+  occupied: { label: { ar: 'مشغول', en: 'Occupied', ur: 'مصروف', bn: 'ব্যস্ত' }, color: 'bg-blue-100 text-blue-700 border-blue-200', icon: BedDouble },
+  maintenance: { label: { ar: 'صيانة', en: 'Maintenance', ur: 'مرمت', bn: 'মেরামত' }, color: 'bg-red-100 text-red-700 border-red-200', icon: AlertCircle },
+  cleaning: { label: { ar: 'تنظيف', en: 'Cleaning', ur: 'صفائی', bn: 'পরিষ্কার' }, color: 'bg-amber-100 text-amber-700 border-amber-200', icon: Brush },
 };
 
 export default function CleaningPage() {
   const { role } = useUserRole();
-  const { language } = useAppLanguage();
+  const { language, setLanguage } = useAppLanguage();
   const { activeHotelId } = useActiveHotel();
-  const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
-  const dateLocale = language === 'en' ? 'en-GB' : 'ar-EG';
-  const timeLocale = language === 'en' ? 'en-US' : 'ar-SA';
-  const unknownUserLabel = t('مستخدم غير معروف', 'Unknown user');
-  const unknownStaffLabel = t('موظف غير معروف', 'Unknown staff');
+  const t = (arText: string, enText: string, urText?: string, bnText?: string) => {
+    if (language === 'bn') return bnText ?? arText;
+    if (language === 'ur') return urText ?? arText;
+    return language === 'en' ? enText : arText;
+  };
+  const dateLocale = language === 'en' ? 'en-GB' : language === 'ur' ? 'ur-PK' : language === 'bn' ? 'bn-BD' : 'ar-EG';
+  const timeLocale = language === 'en' ? 'en-US' : language === 'ur' ? 'ur-PK' : language === 'bn' ? 'bn-BD' : 'ar-SA';
+  const unknownUserLabel = t('مستخدم غير معروف', 'Unknown user', 'نامعلوم صارف', 'অজানা ব্যবহারকারী');
+  const unknownStaffLabel = t('موظف غير معروف', 'Unknown staff', 'نامعلوم عملہ', 'অজানা কর্মচারী');
   const isReceptionist = role === 'receptionist';
+  const isHousekeeping = role === 'housekeeping';
   const selectedHotelId = activeHotelId || 'all';
-  const [activeTab, setActiveTab] = useState<'needs_cleaning' | 'all' | 'history' | 'notes'>('needs_cleaning');
+  type CleaningTab = 'needs_cleaning' | 'needs_maintenance' | 'available_units' | 'all' | 'history' | 'notes';
+  // ⚠️ للهاوس كيبنج: التبويبات المسموح بها فقط (تحتاج تنظيف + تحتاج صيانة + وحدات متاحة — بدون تجاوز خروج!)
+  //    نحمي التبويب النشط ونجبره على أول مسموح في حال الدخول على محظور
+  const HOUSEKEEPING_ALLOWED: CleaningTab[] = ['needs_cleaning', 'needs_maintenance', 'available_units'];
+  const initialTab: CleaningTab = 'needs_cleaning';
+  const [rawActiveTab, setRawActiveTab] = useState<CleaningTab>(initialTab);
+  // الحماية النشطة: إذا كان هاوس كيبنج والتبويب الحالي غير مسموح → يُرجع تلقائياً لـ needs_cleaning
+  const activeTab: CleaningTab = React.useMemo(() => {
+    if (isHousekeeping && !HOUSEKEEPING_ALLOWED.includes(rawActiveTab)) {
+      return 'needs_cleaning';
+    }
+    return rawActiveTab;
+  }, [isHousekeeping, rawActiveTab]);
+  const setActiveTab = (next: CleaningTab) => {
+    if (isHousekeeping && !HOUSEKEEPING_ALLOWED.includes(next)) return; // حظر التبديل لتبويب محظور
+    setRawActiveTab(next);
+  };
   const [units, setUnits] = useState<Unit[]>([]);
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [cleaningLogs, setCleaningLogs] = useState<CleaningLog[]>([]);
@@ -138,7 +162,7 @@ export default function CleaningPage() {
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const selectedHotelName = React.useMemo(() => {
-    if (selectedHotelId === 'all') return t('الكل', 'All');
+    if (selectedHotelId === 'all') return t('الكل', 'All', 'تمام', 'সব');
     return hotels.find((h) => String(h.id) === String(selectedHotelId))?.name || '-';
   }, [hotels, selectedHotelId, language]);
   
@@ -167,16 +191,14 @@ export default function CleaningPage() {
   // Fetch Data
   useEffect(() => {
     if (activeTab === 'history') {
-      fetchHistory();
-      fetchProfiles();
+      if (!isHousekeeping) { fetchHistory(); fetchProfiles(); }
     } else if (activeTab === 'notes') {
-      fetchNotes();
-      fetchProfiles();
+      if (!isHousekeeping) { fetchNotes(); fetchProfiles(); }
     } else {
       fetchData();
     }
     fetchCurrentUser();
-  }, [activeTab, selectedHotelId]);
+  }, [activeTab, selectedHotelId, isHousekeeping]);
 
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*');
@@ -373,7 +395,7 @@ export default function CleaningPage() {
 
   const handleConfirmLog = async (log: CleaningLog) => {
     if (!currentUser) return;
-    if (!confirm(t('هل أنت متأكد من تأكيد هذا التنظيف؟ سيتم حذف الصورة وتسجيل التأكيد.', 'Are you sure you want to confirm this cleaning? The photo will be deleted and the confirmation will be recorded.'))) return;
+    if (!confirm(t('هل أنت متأكد من تأكيد هذا التنظيف؟ سيتم حذف الصورة وتسجيل التأكيد.', 'Are you sure you want to confirm this cleaning? The photo will be deleted and the confirmation will be recorded.', 'کیا آپ اس صفائی کی تصدیق کرنے کے لیے یقینی ہیں؟ تصویر حذف کر دی جائے گی اور تصدیق درج ہو جائے گی۔', 'আপনি কি এই পরিচ্ছন্নতা নিশ্চিত করতে চান? ছবিটি মুছে ফেলা হবে এবং নিশ্চিতকরণ নথিভুক্ত করা হবে।'))) return;
 
     try {
       // 1. Update cleaning_logs
@@ -398,14 +420,14 @@ export default function CleaningPage() {
               confirmed_by: currentUser.id, 
               confirmed_at: new Date().toISOString(),
               photo_data: undefined,
-              confirmer_name: currentUser.full_name || currentUser.email || t('أنا', 'Me')
+              confirmer_name: currentUser.full_name || currentUser.email || t('أنا', 'Me', 'میں', 'আমি')
             } 
           : l
       ));
 
     } catch (error) {
       console.error('Error confirming log:', error);
-      alert(t('حدث خطأ أثناء التأكيد', 'An error occurred while confirming'));
+      alert(t('حدث خطأ أثناء التأكيد', 'An error occurred while confirming', 'تصدیق کے دوران ایک خرابی پیش آئی', 'নিশ্চিত করার সময় একটি ত্রুটি ঘটেছে'));
     }
   };
 
@@ -578,7 +600,7 @@ export default function CleaningPage() {
 
     } catch (error) {
       console.error('Error confirming cleaning:', error);
-      alert(t('حدث خطأ أثناء تأكيد التنظيف', 'An error occurred while confirming cleaning'));
+      alert(t('حدث خطأ أثناء تأكيد التنظيف', 'An error occurred while confirming cleaning', 'صفائی کی تصدیق کے دوران خرابی پیش آئی', 'পরিচ্ছন্নতা নিশ্চিত করার সময় একটি ত্রুটি ঘটেছে'));
     } finally {
       setIsSubmitting(false);
     }
@@ -587,7 +609,7 @@ export default function CleaningPage() {
   const handleAddNote = async () => {
     if (!currentUser) return;
     if (!noteForm.target_user_id || !noteForm.content) {
-      alert(t('يرجى اختيار الموظف وكتابة المحتوى', 'Please choose an employee and enter the content'));
+      alert(t('يرجى اختيار الموظف وكتابة المحتوى', 'Please choose an employee and enter the content', 'براہ کرم ملازم کو منتخب کریں اور مواد درج کریں', 'দয়া করে একজন কর্মচারী বেছে নিন এবং বিষয়বস্তু লিখুন'));
       return;
     }
 
@@ -632,11 +654,11 @@ export default function CleaningPage() {
         severity: 'low',
         content: ''
       });
-      alert(t('تم إضافة الملاحظة بنجاح', 'Note added successfully'));
+      alert(t('تم إضافة الملاحظة بنجاح', 'Note added successfully', 'نوٹ کامیابی سے شامل کر دیا گیا', 'নোট সফলভাবে যোগ করা হয়েছে'));
 
     } catch (error) {
       console.error('Error adding note:', error);
-      alert(t('حدث خطأ أثناء إضافة الملاحظة', 'An error occurred while adding the note'));
+      alert(t('حدث خطأ أثناء إضافة الملاحظة', 'An error occurred while adding the note', 'نوٹ شامل کرنے کے دوران خرابی پیش آئی', 'নোট যোগ করার সময় একটি ত্রুটি ঘটেছে'));
     } finally {
       setIsSubmitting(false);
     }
@@ -667,7 +689,7 @@ export default function CleaningPage() {
 
     } catch (error) {
       console.error('Error updating status:', error);
-      alert(t('حدث خطأ أثناء تحديث الحالة', 'An error occurred while updating status'));
+      alert(t('حدث خطأ أثناء تحديث الحالة', 'An error occurred while updating status', 'حالت کو اپ ڈیٹ کرنے کے دوران خرابی پیش آئی', 'স্ট্যাটাস আপডেট করার সময় একটি ত্রুটি ঘটেছে'));
     } finally {
       setUpdating(null);
     }
@@ -682,13 +704,22 @@ export default function CleaningPage() {
     if (activeTab === 'needs_cleaning') {
       return unit.status === 'cleaning';
     }
+    if (activeTab === 'needs_maintenance') {
+      return unit.status === 'maintenance';
+    }
+    // ✅ تبويب الوحدات المتاحة فقط — ولاكن التي عليها تجاوز خروج NO (لا تظهر!)
+    if (activeTab === 'available_units') {
+      const isAvailable = unit.status === 'available';
+      const isOverdueCheckout = unit.next_action === 'overdue';
+      return isAvailable && !isOverdueCheckout;
+    }
     
     return true;
   });
 
   // Group by Floor (Optional visualization improvement)
   const groupedUnits = filteredUnits.reduce((acc, unit) => {
-    const floor = unit.floor || t('غير محدد', 'Unspecified');
+    const floor = unit.floor || t('غير محدد', 'Unspecified', 'غیر مقرر', 'অনির্দিষ্ট');
     if (!acc[floor]) acc[floor] = [];
     acc[floor].push(unit);
     return acc;
@@ -701,18 +732,41 @@ export default function CleaningPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Brush className="text-blue-600" />
-            {t('تنظيف الوحدات', 'Unit cleaning')}
+            {t('تنظيف الوحدات', 'Unit cleaning', 'یونٹ صفائی', 'ইউনিট পরিচ্ছন্নতা')}
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            {t('إدارة ومتابعة نظافة الغرف والوحدات السكنية', 'Manage and track room/unit cleanliness')}
+            {t('إدارة ومتابعة نظافة الغرف والوحدات السكنية', 'Manage and track room/unit cleanliness', 'کمرے اور رہائشی یونٹس کی صفائی کا نظم و نسق', 'রুম/ইউনিট পরিচ্ছন্নতা পরিচালনা ও ট্র্যাক করুন')}
           </p>
         </div>
 
-        {/* Filters */}
-        <div className="w-full md:w-auto flex items-center gap-3 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
-          <Filter size={18} className="text-gray-400 mr-1 shrink-0" />
-          <div className="w-full md:w-auto text-sm text-gray-700 font-bold bg-transparent outline-none min-w-[150px]">
-            {selectedHotelName}
+        {/* Filters + Language Switcher */}
+        <div className="w-full md:w-auto flex flex-wrap items-center gap-3">
+          {/* Language Switcher: AR / EN / UR / BN */}
+          <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
+            {(['ar', 'en', 'ur', 'bn'] as const).map((lang) => {
+              const label = lang === 'ar' ? 'العربية' : lang === 'en' ? 'English' : lang === 'ur' ? 'اردو' : 'বাংলা';
+              return (
+                <button
+                  key={lang}
+                  onClick={() => setLanguage(lang as any)}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-md transition-colors",
+                    language === lang
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-gray-600 hover:bg-gray-100"
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="w-full md:w-auto flex items-center gap-3 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
+            <Filter size={18} className="text-gray-400 mr-1 shrink-0" />
+            <div className="w-full md:w-auto text-sm text-gray-700 font-bold bg-transparent outline-none min-w-[150px]">
+              {selectedHotelName}
+            </div>
           </div>
         </div>
       </div>
@@ -730,66 +784,105 @@ export default function CleaningPage() {
             )}
           >
             <Brush size={16} />
-            {t('تحتاج تنظيف', 'Needs cleaning')}
+            {t('تحتاج تنظيف', 'Needs cleaning', 'صفائی درکار', 'পরিষ্কার প্রয়োজন')}
             <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs">
               {units.filter(u => u.status === 'cleaning' && (selectedHotelId === 'all' || u.hotel_id === selectedHotelId)).length}
             </span>
           </button>
           
+          {/* ✅ تبويب جديد: تحتاج صيانة — يظهر للجميع وينتقل فيه الهاوس كيبنج مباشرة */}
           <button
-            onClick={() => setActiveTab('all')}
+            onClick={() => setActiveTab('needs_maintenance')}
             className={cn(
               "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
-              activeTab === 'all'
-                ? "border-blue-600 text-blue-600"
+              activeTab === 'needs_maintenance'
+                ? "border-red-600 text-red-600"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             )}
           >
-            <BedDouble size={16} />
-            {t('كل الوحدات', 'All units')}
-            <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
-              {selectedHotelId === 'all' ? units.length : units.filter(u => u.hotel_id === selectedHotelId).length}
+            <Wrench size={16} />
+            {t('تحتاج صيانة', 'Needs maintenance', 'مرمت درکار', 'মেরামত প্রয়োজন')}
+            <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs">
+              {units.filter(u => u.status === 'maintenance' && (selectedHotelId === 'all' || u.hotel_id === selectedHotelId)).length}
             </span>
           </button>
 
+          {/* ✅ تبويب جديد: وحدات متاحة — للهاوس كيبنج أيضاً (ولا تظهر له وحدات تجاوز الخروج) */}
           <button
-            onClick={() => setActiveTab('history')}
+            onClick={() => setActiveTab('available_units')}
             className={cn(
               "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
-              activeTab === 'history'
-                ? "border-blue-600 text-blue-600"
+              activeTab === 'available_units'
+                ? "border-emerald-600 text-emerald-700"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             )}
           >
-            <ClipboardList size={16} />
-            {t('سجل التنظيف', 'Cleaning history')}
+            <CheckCircle size={16} />
+            {t('وحدات متاحة', 'Available units', 'دستیاب یونٹس', 'উপলব্ধ ইউনিট')}
+            <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs">
+              {units.filter(u => u.status === 'available' && u.next_action !== 'overdue' && (selectedHotelId === 'all' || u.hotel_id === selectedHotelId)).length}
+            </span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('notes')}
-            className={cn(
-              "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
-              activeTab === 'notes'
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            )}
-          >
-            <MessageSquare size={16} />
-            {t('الملاحظات والمخالفات', 'Notes & violations')}
-          </button>
+          {/* باقي التبويبات: للادمن والمدير فقط — لا تظهر للهاوس كيبنج */}
+          {!isHousekeeping && (
+            <>
+              <button
+                onClick={() => setActiveTab('all')}
+                className={cn(
+                  "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
+                  activeTab === 'all'
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                )}
+              >
+                <BedDouble size={16} />
+                {t('كل الوحدات', 'All units', 'تمام یونٹس', 'সব ইউনিট')}
+                <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
+                  {selectedHotelId === 'all' ? units.length : units.filter(u => u.hotel_id === selectedHotelId).length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('history')}
+                className={cn(
+                  "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
+                  activeTab === 'history'
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                )}
+              >
+                <ClipboardList size={16} />
+                {t('سجل التنظيف', 'Cleaning history', 'صفائی کی تاریخ', 'পরিচ্ছন্নতার ইতিহাস')}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('notes')}
+                className={cn(
+                  "pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2",
+                  activeTab === 'notes'
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                )}
+              >
+                <MessageSquare size={16} />
+                {t('الملاحظات والمخالفات', 'Notes & violations', 'نوٹس اور خلاف ورزیاں', 'নোট ও লঙ্ঘন')}
+              </button>
+            </>
+          )}
         </nav>
       </div>
 
       {/* Content */}
       {loading ? (
-        <div className="text-center py-20 text-gray-500">{t('جاري تحميل البيانات...', 'Loading...')}</div>
+        <div className="text-center py-20 text-gray-500">{t('جاري تحميل البيانات...', 'Loading...', 'ڈیٹا لوڈ ہو رہا ہے...', 'ডেটা লোড হচ্ছে...')}</div>
       ) : activeTab === 'history' ? (
         <div className="space-y-4">
           {/* Filters */}
           <div className="bg-white p-4 rounded-xl border border-gray-200 flex flex-wrap gap-4 items-center">
             <div className="flex items-center gap-2">
               <Filter size={18} className="text-gray-500" />
-              <span className="text-sm font-medium text-gray-700">{t('تصفية:', 'Filter:')}</span>
+              <span className="text-sm font-medium text-gray-700">{t('تصفية:', 'Filter:', 'فلٹر:', 'ফিল্টার:')}</span>
             </div>
             
             <div className="relative">
@@ -799,7 +892,7 @@ export default function CleaningPage() {
                 onChange={(e) => setCleanerFilter(e.target.value)}
                 className="pr-9 pl-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
               >
-                <option value="all">{t('كل الموظفين', 'All staff')}</option>
+                <option value="all">{t('كل الموظفين', 'All staff', 'تمام عملہ', 'সব কর্মচারী')}</option>
                 {allProfiles.map(profile => (
                   <option key={profile.id} value={profile.id}>
                     {profile.full_name || profile.email}
@@ -824,7 +917,7 @@ export default function CleaningPage() {
                 className="text-sm text-red-600 hover:text-red-700 flex items-center gap-1"
               >
                 <X size={14} />
-                {t('مسح التصفيات', 'Clear filters')}
+                {t('مسح التصفيات', 'Clear filters', 'فلٹر صاف کریں', 'ফিল্টার সাফ করুন')}
               </button>
             )}
           </div>
@@ -832,11 +925,11 @@ export default function CleaningPage() {
           {cleaningLogs.length === 0 ? (
             <div className="text-center py-20 bg-gray-50 rounded-xl border border-dashed border-gray-200">
               <ClipboardList size={48} className="mx-auto text-gray-300 mb-4" />
-                <h3 className="text-lg font-medium text-gray-900">{t('لا توجد سجلات تنظيف', 'No cleaning logs')}</h3>
+                <h3 className="text-lg font-medium text-gray-900">{t('لا توجد سجلات تنظيف', 'No cleaning logs', 'کوئی صفائی لاگز نہیں', 'কোনো পরিচ্ছন্নতার লগ নেই')}</h3>
               <p className="text-gray-500">
                   {(cleanerFilter !== 'all' || dateFilter)
-                    ? t('لا توجد نتائج تطابق التصفيات', 'No results match the filters')
-                    : t('سجل التنظيف فارغ حالياً', 'Cleaning history is currently empty')}
+                    ? t('لا توجد نتائج تطابق التصفيات', 'No results match the filters', 'فلٹرز سے کوئی نتیجہ میل نہیں کھاتا', 'ফিল্টারের সাথে কোনো ফলাফল মেলে না')
+                    : t('سجل التنظيف فارغ حالياً', 'Cleaning history is currently empty', 'صفائی کی تاریخ فی الحال خالی ہے', 'পরিচ্ছন্নতার ইতিহাস বর্তমানে খালি')}
               </p>
             </div>
           ) : (
@@ -861,12 +954,12 @@ export default function CleaningPage() {
                       {log.status === 'confirmed' ? (
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
                           <CheckCircle size={12} />
-                          {t('مؤكد', 'Confirmed')}
+                          {t('مؤكد', 'Confirmed', 'تصدیق شدہ', 'নিশ্চিত')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
                           <AlertCircle size={12} />
-                          {t('انتظار', 'Pending')}
+                          {t('انتظار', 'Pending', 'زیر التوثیق', 'বিচারাধীন')}
                         </span>
                       )}
                     </div>
@@ -883,7 +976,7 @@ export default function CleaningPage() {
                           className="text-blue-600 text-xs flex items-center gap-1 hover:underline"
                         >
                           <Camera size={14} />
-                          {t('عرض الصورة', 'View photo')}
+                          {t('عرض الصورة', 'View photo', 'تصویر دیکھیں', 'ছবি দেখুন')}
                         </button>
                       )}
                     </div>
@@ -898,10 +991,10 @@ export default function CleaningPage() {
                       isReceptionist ? (
                         <button
                           className="w-full py-2 bg-gray-200 text-gray-500 text-sm font-medium rounded-lg cursor-not-allowed mt-1"
-                          title={t('غير مسموح للرسيبشن', 'Not allowed for reception')}
+                          title={t('غير مسموح للرسيبشن', 'Not allowed for reception', 'رسیپشن کے لیے اجازت نہیں', 'রিসেপশনের জন্য অনুমোদিত নয়')}
                           aria-disabled
                         >
-                          {t('تأكيد التنظيف', 'Confirm cleaning')}
+                          {t('تأكيد التنظيف', 'Confirm cleaning', 'صفائی کی تصدیق کریں', 'পরিচ্ছন্নতা নিশ্চিত করুন')}
                         </button>
                       ) : (
                         <button
@@ -909,7 +1002,7 @@ export default function CleaningPage() {
                           className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 mt-1"
                         >
                           <CheckCircle size={16} />
-                          {t('تأكيد التنظيف', 'Confirm cleaning')}
+                          {t('تأكيد التنظيف', 'Confirm cleaning', 'صفائی کی تصدیق کریں', 'পরিচ্ছন্নতা নিশ্চিত করুন')}
                         </button>
                       )
                     )}
@@ -923,13 +1016,13 @@ export default function CleaningPage() {
                   <table className="w-full text-sm text-right">
                     <thead className="bg-gray-50 text-gray-700 font-medium border-b border-gray-200">
                       <tr>
-                        <th className="px-6 py-4">{t('الوحدة', 'Unit')}</th>
-                        <th className="px-6 py-4">{t('المنفذ', 'Cleaner')}</th>
-                        <th className="px-6 py-4">{t('التاريخ', 'Date')}</th>
-                        <th className="px-6 py-4">{t('ملاحظات', 'Notes')}</th>
-                        <th className="px-6 py-4">{t('الصورة', 'Photo')}</th>
-                        <th className="px-6 py-4">{t('الحالة', 'Status')}</th>
-                        <th className="px-6 py-4">{t('إجراءات', 'Actions')}</th>
+                        <th className="px-6 py-4">{t('الوحدة', 'Unit', 'یونٹ', 'ইউনিট')}</th>
+                        <th className="px-6 py-4">{t('المنفذ', 'Cleaner', 'صفائی کرنے والا', 'পরিচ্ছন্নতাকারী')}</th>
+                        <th className="px-6 py-4">{t('التاريخ', 'Date', 'تاریخ', 'তারিখ')}</th>
+                        <th className="px-6 py-4">{t('ملاحظات', 'Notes', 'نوٹس', 'নোট')}</th>
+                        <th className="px-6 py-4">{t('الصورة', 'Photo', 'تصویر', 'ছবি')}</th>
+                        <th className="px-6 py-4">{t('الحالة', 'Status', 'سٹیٹس', 'স্ট্যাটাস')}</th>
+                        <th className="px-6 py-4">{t('إجراءات', 'Actions', 'کارروائیاں', 'কার্যক্রম')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -959,7 +1052,7 @@ export default function CleaningPage() {
                             {log.notes ? (
                               <span className="text-gray-700 truncate block" title={log.notes}>{log.notes}</span>
                             ) : (
-                              <span className="text-gray-400 italic">{t('لا توجد ملاحظات', 'No notes')}</span>
+                              <span className="text-gray-400 italic">{t('لا توجد ملاحظات', 'No notes', 'کوئی نوٹس نہیں', 'কোনো নোট নেই')}</span>
                             )}
                           </td>
                           <td className="px-6 py-4">
@@ -974,11 +1067,11 @@ export default function CleaningPage() {
                                   className="w-full h-full object-cover rounded-lg border border-gray-200"
                                 />
                                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                                  <span className="text-white text-xs">{t('عرض', 'View')}</span>
+                                  <span className="text-white text-xs">{t('عرض', 'View', 'دیکھیں', 'দেখুন')}</span>
                                 </div>
                               </div>
                             ) : (
-                              <span className="text-xs text-gray-400 italic">{t('تم حذف الصورة', 'Photo deleted')}</span>
+                              <span className="text-xs text-gray-400 italic">{t('تم حذف الصورة', 'Photo deleted', 'تصویر حذف کر دی گئی', 'ছবি মুছে ফেলা হয়েছে')}</span>
                             )}
                           </td>
                           <td className="px-6 py-4">
@@ -986,19 +1079,19 @@ export default function CleaningPage() {
                               <div className="flex flex-col gap-1">
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 w-fit">
                                   <CheckCircle size={12} />
-                                  {t('مؤكد', 'Confirmed')}
+                                  {t('مؤكد', 'Confirmed', 'تصدیق شدہ', 'নিশ্চিত')}
                                 </span>
                                 {log.confirmer_name && (
                                   <span className="text-xs text-gray-500 flex items-center gap-1">
                                     <UserCheck size={10} />
-                                    {t('بواسطة:', 'By:')} {log.confirmer_name}
+                                    {t('بواسطة:', 'By:', 'کے ذریعہ:', 'দ্বারা:')} {log.confirmer_name}
                                   </span>
                                 )}
                               </div>
                             ) : (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
                                 <AlertCircle size={12} />
-                                {t('بانتظار التأكيد', 'Awaiting confirmation')}
+                                {t('بانتظار التأكيد', 'Awaiting confirmation', 'تصدیق کا انتظار', 'নিশ্চিতকরণের অপেক্ষায়')}
                               </span>
                             )}
                           </td>
@@ -1009,7 +1102,7 @@ export default function CleaningPage() {
                                 className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors shadow-sm flex items-center gap-1.5"
                               >
                                 <CheckCircle size={14} />
-                                {t('تأكيد', 'Confirm')}
+                                {t('تأكيد', 'Confirm', 'تصدیق کریں', 'নিশ্চিত করুন')}
                               </button>
                             )}
                           </td>
@@ -1026,8 +1119,8 @@ export default function CleaningPage() {
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl border border-gray-200">
             <div>
-              <h2 className="text-lg font-medium text-gray-900">{t('سجل الملاحظات والمخالفات', 'Notes & violations log')}</h2>
-              <p className="text-sm text-gray-500">{t('متابعة أداء الموظفين وتسجيل الملاحظات الإدارية', 'Track staff performance and record administrative notes')}</p>
+              <h2 className="text-lg font-medium text-gray-900">{t('سجل الملاحظات والمخالفات', 'Notes & violations log', 'نوٹس اور خلاف ورزیوں کا لاگ', 'নোট ও লঙ্ঘনের লগ')}</h2>
+              <p className="text-sm text-gray-500">{t('متابعة أداء الموظفين وتسجيل الملاحظات الإدارية', 'Track staff performance and record administrative notes', 'ملازمین کی کارکردگی کا جائزہ لینا اور انتظامی نوٹس درج کرنا', 'কর্মচারীদের কার্যকারিতা ট্র্যাক করুন এবং প্রশাসনিক নোট রেকর্ড করুন')}</p>
             </div>
             {!isReceptionist && (
               <button
@@ -1035,7 +1128,7 @@ export default function CleaningPage() {
                 className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
               >
                 <Plus size={16} />
-                {t('إضافة ملاحظة', 'Add note')}
+                {t('إضافة ملاحظة', 'Add note', 'نوٹ شامل کریں', 'নোট যোগ করুন')}
               </button>
             )}
           </div>
@@ -1043,8 +1136,8 @@ export default function CleaningPage() {
           {staffNotes.length === 0 ? (
             <div className="text-center py-20 bg-gray-50 rounded-xl border border-dashed border-gray-200">
               <MessageSquare size={48} className="mx-auto text-gray-300 mb-4" />
-                <h3 className="text-lg font-medium text-gray-900">{t('لا توجد ملاحظات', 'No notes')}</h3>
-                <p className="text-gray-500">{t('لم يتم تسجيل أي ملاحظات أو مخالفات بعد', 'No notes or violations have been recorded yet')}</p>
+                <h3 className="text-lg font-medium text-gray-900">{t('لا توجد ملاحظات', 'No notes', 'کوئی نوٹس نہیں')}</h3>
+                <p className="text-gray-500">{t('لم يتم تسجيل أي ملاحظات أو مخالفات بعد', 'No notes or violations have been recorded yet', 'ابھی تک کوئی نوٹس یا خلاف ورزی درج نہیں کی گئی ہے', 'এখনো কোনো নোট বা লঙ্ঘন রেকর্ড করা হয়নি')}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1068,17 +1161,17 @@ export default function CleaningPage() {
                         "bg-red-100 text-red-700"
                       )}>
                         <AlertTriangle size={12} />
-                        {t('مخالفة', 'Violation')} ({note.severity === 'critical' ? t('جسيمة', 'Critical') : note.severity === 'high' ? t('عالية', 'High') : note.severity === 'medium' ? t('متوسطة', 'Medium') : t('بسيطة', 'Low')})
+                        {t('مخالفة', 'Violation', 'خلاف ورزی', 'লঙ্ঘন')} ({note.severity === 'critical' ? t('جسيمة', 'Critical', 'سنگین', 'মারাত্মক') : note.severity === 'high' ? t('عالية', 'High', 'زیادہ', 'উচ্চ') : note.severity === 'medium' ? t('متوسطة', 'Medium', 'متوسط', 'মাঝারি') : t('بسيطة', 'Low', 'کم', 'নিম্ন')})
                       </span>
                     ) : note.type === 'commendation' ? (
                       <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 flex items-center gap-1">
                         <Award size={12} />
-                        {t('تنويه', 'Commendation')}
+                        {t('تنويه', 'Commendation', 'تعریف', 'সম্মাননা')}
                       </span>
                     ) : (
                       <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 flex items-center gap-1">
                         <MessageSquare size={12} />
-                        {t('ملاحظة', 'Note')}
+                        {t('ملاحظة', 'Note', 'نوٹ', 'নোট')}
                       </span>
                     )}
                   </div>
@@ -1088,7 +1181,7 @@ export default function CleaningPage() {
                   </p>
                   
                   <div className="flex justify-between items-center text-xs text-gray-400 border-t border-gray-100 pt-3">
-                    <span>{t('بواسطة:', 'By:')} {note.creator_name}</span>
+                    <span>{t('بواسطة:', 'By:', 'کے ذریعہ:', 'দ্বারা:')} {note.creator_name}</span>
                     <span>{new Date(note.created_at).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 </div>
@@ -1099,11 +1192,15 @@ export default function CleaningPage() {
       ) : filteredUnits.length === 0 ? (
         <div className="text-center py-20 bg-gray-50 rounded-xl border border-dashed border-gray-200">
           <CheckCircle size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">{t('لا توجد وحدات', 'No units')}</h3>
+          <h3 className="text-lg font-medium text-gray-900">{t('لا توجد وحدات', 'No units', 'کوئی یونٹس نہیں', 'কোনো ইউনিট নেই')}</h3>
           <p className="text-gray-500">
             {activeTab === 'needs_cleaning' 
-              ? t('جميع الوحدات نظيفة وجاهزة!', 'All units are clean and ready!')
-              : t('لا توجد وحدات مطابقة للفلتر المحدد', 'No units match the selected filter')}
+              ? t('جميع الوحدات نظيفة وجاهزة!', 'All units are clean and ready!', 'تمام یونٹس صاف اور تیار ہیں!', 'সব ইউনিট পরিষ্কার ও প্রস্তুত!')
+              : activeTab === 'needs_maintenance'
+                ? t('لا توجد وحدات بحاجة للصيانة حالياً.', 'No units currently require maintenance.', 'فی الحال کوئی یونٹ مرمت کی ضرورت نہیں ہے۔', 'বর্তমানে কোনো ইউনিটের মেরামতের প্রয়োজন নেই।')
+                : activeTab === 'available_units'
+                  ? t('لا توجد وحدات متاحة حالياً.', 'No units are currently available.', 'فی الحال کوئی دستیاب یونٹس نہیں ہیں۔', 'বর্তমানে কোনো ইউনিট পাওয়া যাচ্ছে না।')
+                  : t('لا توجد وحدات مطابقة للفلتر المحدد', 'No units match the selected filter', 'منتخب فلٹر سے کوئی یونٹس میل نہیں کھاتے', 'নির্বাচিত ফিল্টারের সাথে কোনো ইউনিট মেলে না')}
           </p>
         </div>
       ) : (
@@ -1125,7 +1222,7 @@ export default function CleaningPage() {
                       </span>
                     </h3>
                     <p className="text-xs text-gray-500 mt-1">
-                        {unit.hotel?.name} • {t('طابق', 'Floor')} {unit.floor}
+                        {unit.hotel?.name} • {t('طابق', 'Floor', 'منزل', 'তলা')} {unit.floor}
                     </p>
                   </div>
                   <div className={cn(
@@ -1133,7 +1230,7 @@ export default function CleaningPage() {
                     STATUS_LABELS[unit.status].color
                   )}>
                     <StatusIcon size={12} />
-                    {language === 'en' ? STATUS_LABELS[unit.status].label.en : STATUS_LABELS[unit.status].label.ar}
+                    {language === 'en' ? STATUS_LABELS[unit.status].label.en : language === 'ur' ? STATUS_LABELS[unit.status].label.ur : language === 'bn' ? STATUS_LABELS[unit.status].label.bn : STATUS_LABELS[unit.status].label.ar}
                   </div>
                 </div>
 
@@ -1150,7 +1247,7 @@ export default function CleaningPage() {
                       ) : (
                         <>
                           <Check size={16} />
-                          {t('تم التنظيف', 'Cleaned')}
+                          {t('تم التنظيف', 'Cleaned', 'صفائی ہو گئی', 'পরিষ্কার করা হয়েছে')}
                         </>
                       )}
                     </button>
@@ -1161,10 +1258,10 @@ export default function CleaningPage() {
                       disabled={updating === unit.id}
                       className="w-full py-2 px-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
                     >
-                      <option value="available">{t('متاح (نظيف)', 'Available (clean)')}</option>
-                      <option value="cleaning">{t('يحتاج تنظيف', 'Needs cleaning')}</option>
-                      <option value="maintenance">{t('صيانة', 'Maintenance')}</option>
-                      <option value="occupied">{t('مشغول', 'Occupied')}</option>
+                      <option value="available">{t('متاح (نظيف)', 'Available (clean)', 'دستیاب (صاف)', 'উপলব্ধ (পরিষ্কার)')}</option>
+                      <option value="cleaning">{t('يحتاج تنظيف', 'Needs cleaning', 'صفائی درکار', 'পরিষ্কার প্রয়োজন')}</option>
+                      <option value="maintenance">{t('صيانة', 'Maintenance', 'مرمت', 'মেরামত')}</option>
+                      <option value="occupied">{t('مشغول', 'Occupied', 'مصروف', 'ব্যস্ত')}</option>
                     </select>
                   )}
                 </div>
@@ -1201,7 +1298,7 @@ export default function CleaningPage() {
             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
               <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <MessageSquare size={20} className="text-blue-600" />
-                {t('إضافة ملاحظة / مخالفة', 'Add note / violation')}
+                {t('إضافة ملاحظة / مخالفة', 'Add note / violation', 'نوٹ / خلاف ورزی شامل کریں', 'নোট / লঙ্ঘন যোগ করুন')}
               </h3>
               <button 
                 onClick={() => setIsNoteModalOpen(false)}
@@ -1215,14 +1312,14 @@ export default function CleaningPage() {
               {/* Employee Select */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('الموظف المعني', 'Target employee')}
+                  {t('الموظف المعني', 'Target employee', 'متعلقہ ملازم', 'লক্ষ্য কর্মচারী')}
                 </label>
                 <select
                   value={noteForm.target_user_id}
                   onChange={(e) => setNoteForm({...noteForm, target_user_id: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-right"
                 >
-                  <option value="">{t('اختر الموظف...', 'Select employee...')}</option>
+                  <option value="">{t('اختر الموظف...', 'Select employee...', 'ملازم منتخب کریں...', 'কর্মচারী নির্বাচন করুন...')}</option>
                   {allProfiles.map(profile => (
                     <option key={profile.id} value={profile.id}>
                       {profile.full_name || profile.email}
@@ -1235,33 +1332,33 @@ export default function CleaningPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('نوع السجل', 'Entry type')}
-                  </label>
-                  <select
-                    value={noteForm.type}
-                    onChange={(e) => setNoteForm({...noteForm, type: e.target.value as any})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-right"
-                  >
-                    <option value="note">{t('ملاحظة عامة', 'General note')}</option>
-                    <option value="violation">{t('مخالفة', 'Violation')}</option>
-                    <option value="commendation">{t('تنويه / شكر', 'Commendation')}</option>
-                  </select>
+                  {t('نوع السجل', 'Entry type', ' اندراج کی قسم', 'এন্ট্রি ধরন')}
+                </label>
+                <select
+                  value={noteForm.type}
+                  onChange={(e) => setNoteForm({...noteForm, type: e.target.value as any})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-right"
+                >
+                  <option value="note">{t('ملاحظة عامة', 'General note', 'عام نوٹ', 'সাধারণ নোট')}</option>
+                  <option value="violation">{t('مخالفة', 'Violation', 'خلاف ورزی', 'লঙ্ঘন')}</option>
+                  <option value="commendation">{t('تنويه / شكر', 'Commendation', 'تعریف / شکریہ', 'সম্মাননা / ধন্যবাদ')}</option>
+                </select>
                 </div>
                 
                 {noteForm.type === 'violation' && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {t('درجة المخالفة', 'Severity')}
+                      {t('درجة المخالفة', 'Severity', 'شدت', 'তীব্রতা')}
                     </label>
                     <select
                       value={noteForm.severity}
                       onChange={(e) => setNoteForm({...noteForm, severity: e.target.value as any})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-right"
                     >
-                      <option value="low">{t('بسيطة', 'Low')}</option>
-                      <option value="medium">{t('متوسطة', 'Medium')}</option>
-                      <option value="high">{t('عالية', 'High')}</option>
-                      <option value="critical">{t('جسيمة', 'Critical')}</option>
+                      <option value="low">{t('بسيطة', 'Low', 'کم', 'নিম্ন')}</option>
+                      <option value="medium">{t('متوسطة', 'Medium', 'متوسط', 'মাঝারি')}</option>
+                      <option value="high">{t('عالية', 'High', 'زیادہ', 'উচ্চ')}</option>
+                      <option value="critical">{t('جسيمة', 'Critical', 'سنگین', 'মারাত্মক')}</option>
                     </select>
                   </div>
                 )}
@@ -1270,13 +1367,13 @@ export default function CleaningPage() {
               {/* Content */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('نص الملاحظة', 'Content')}
+                  {t('نص الملاحظة', 'Content', 'مواد', 'বিষয়বস্তু')}
                 </label>
                 <textarea
                   value={noteForm.content}
                   onChange={(e) => setNoteForm({...noteForm, content: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none h-32 resize-none text-right"
-                  placeholder={t('اكتب تفاصيل الملاحظة أو المخالفة هنا...', 'Write note/violation details here...')}
+                  placeholder={t('اكتب تفاصيل الملاحظة أو المخالفة هنا...', 'Write note/violation details here...', 'یہاں نوٹ/خلاف ورزی کی تفصیلات لکھیں...', 'এখানে নোট/লঙ্ঘনের বিবরণ লিখুন...')}
                 ></textarea>
               </div>
             </div>
@@ -1286,7 +1383,7 @@ export default function CleaningPage() {
                 onClick={() => setIsNoteModalOpen(false)}
                 className="px-4 py-2 text-gray-700 font-medium hover:bg-gray-100 rounded-lg transition-colors"
               >
-                {t('إلغاء', 'Cancel')}
+                {t('إلغاء', 'Cancel', 'منسوخ کریں', 'বাতিল করুন')}
               </button>
               <button
                 onClick={handleAddNote}
@@ -1298,7 +1395,7 @@ export default function CleaningPage() {
                     : "bg-blue-600 hover:bg-blue-700"
                 )}
               >
-                {isSubmitting ? t('جاري الحفظ...', 'Saving...') : t('حفظ الملاحظة', 'Save note')}
+                {isSubmitting ? t('جاري الحفظ...', 'Saving...', 'محفوظ کیا جا رہا ہے...', 'সংরক্ষণ হচ্ছে...') : t('حفظ الملاحظة', 'Save note', 'نوٹ محفوظ کریں', 'নোট সংরক্ষণ করুন')}
               </button>
             </div>
           </div>
@@ -1311,7 +1408,7 @@ export default function CleaningPage() {
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">{t('تأكيد تنظيف الوحدة', 'Confirm unit cleaning')}</h3>
+                <h3 className="text-lg font-bold text-gray-900">{t('تأكيد تنظيف الوحدة', 'Confirm unit cleaning', 'یونٹ کی صفائی کی تصدیق کریں', 'ইউনিট পরিচ্ছন্নতা নিশ্চিত করুন')}</h3>
                 <p className="text-sm text-gray-500">#{selectedUnit.unit_number} - {selectedUnit.hotel?.name}</p>
               </div>
               <button 
@@ -1329,7 +1426,7 @@ export default function CleaningPage() {
                   <User size={18} />
                 </div>
                 <div>
-                  <p className="text-xs text-blue-600 font-medium mb-0.5">{t('منفذ التنظيف', 'Cleaner')}</p>
+                  <p className="text-xs text-blue-600 font-medium mb-0.5">{t('منفذ التنظيف', 'Cleaner', 'صفائی کرنے والا', 'পরিচ্ছন্নতাকারী')}</p>
                   <p className="text-sm font-bold text-gray-900">
                     {currentUser?.full_name || currentUser?.email || unknownUserLabel}
                   </p>
@@ -1339,7 +1436,7 @@ export default function CleaningPage() {
               {/* Photo Upload */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  {t('صورة الغرفة (مطلوب)', 'Room photo (required)')}
+                  {t('صورة الغرفة (مطلوب)', 'Room photo (required)', 'کمرے کی تصویر (ضروری)', 'রুমের ছবি (প্রয়োজনীয়)')}
                 </label>
                 <div className="relative">
                   <input
@@ -1365,14 +1462,14 @@ export default function CleaningPage() {
                           className="w-full h-full object-cover rounded-lg"
                         />
                         <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 hover:opacity-100 transition-opacity rounded-lg">
-                          <p className="text-white text-xs font-bold">{t('تغيير الصورة', 'Change photo')}</p>
+                          <p className="text-white text-xs font-bold">{t('تغيير الصورة', 'Change photo', 'تصویر تبدیل کریں', 'ছবি পরিবর্তন করুন')}</p>
                         </div>
                       </div>
                     ) : (
                       <>
                         <Camera className="text-gray-400 mb-2" size={24} />
-                        <p className="text-sm text-gray-500 font-medium">{t('التقاط صورة للغرفة', 'Take a room photo')}</p>
-                        <p className="text-xs text-gray-400 mt-1">{t('اضغط للكاميرا أو المعرض', 'Tap to open camera or gallery')}</p>
+                        <p className="text-sm text-gray-500 font-medium">{t('التقاط صورة للغرفة', 'Take a room photo', 'کمرے کی تصویر لیں', 'রুমের ছবি তুলুন')}</p>
+                        <p className="text-xs text-gray-400 mt-1">{t('اضغط للكاميرا أو المعرض', 'Tap to open camera or gallery', 'کیمرہ یا گیلری کھولنے کے لیے تھپتھپائیں', 'ক্যামেরা বা গ্যালারি খুলতে ট্যাপ করুন')}</p>
                       </>
                     )}
                   </label>
@@ -1382,12 +1479,12 @@ export default function CleaningPage() {
               {/* Notes */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  {t('تقرير التنظيف (اختياري)', 'Cleaning report (optional)')}
+                  {t('تقرير التنظيف (اختياري)', 'Cleaning report (optional)', 'صفائی کی رپورٹ (اختیاری)', 'পরিচ্ছন্নতা রিপোর্ট (ঐচ্ছিক)')}
                 </label>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder={t('هل هناك ملاحظات صيانة أو أضرار؟', 'Any maintenance notes or damages?')}
+                  placeholder={t('هل هناك ملاحظات صيانة أو أضرار؟', 'Any maintenance notes or damages?', 'کوئی مرمت نوٹس یا نقصانات ہیں؟', 'কোনো মেরামত নোট বা ক্ষতি আছে?')}
                   className="w-full p-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none resize-none h-24"
                 />
               </div>
@@ -1399,7 +1496,7 @@ export default function CleaningPage() {
                 className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-colors"
                 disabled={isSubmitting}
               >
-                {t('إلغاء', 'Cancel')}
+                {t('إلغاء', 'Cancel', 'منسوخ کریں', 'বাতিল করুন')}
               </button>
               <button
                 onClick={handleConfirmCleaning}
@@ -1409,12 +1506,12 @@ export default function CleaningPage() {
                 {isSubmitting ? (
                   <>
                     <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                    {t('جاري الحفظ...', 'Saving...')}
+                    {t('جاري الحفظ...', 'Saving...', 'محفوظ کیا جا رہا ہے...', 'সংরক্ষণ হচ্ছে...')}
                   </>
                 ) : (
                   <>
                     <Check size={18} />
-                    {t('تأكيد التنظيف', 'Confirm cleaning')}
+                    {t('تأكيد التنظيف', 'Confirm cleaning', 'صفائی کی تصدیق کریں', 'পরিচ্ছন্নতা নিশ্চিত করুন')}
                   </>
                 )}
               </button>

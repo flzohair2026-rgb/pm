@@ -8,6 +8,8 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useUserRole } from '@/hooks/useUserRole';
 import FloatingSidebar from '@/components/layout/FloatingSidebar';
 import { supabase } from '@/lib/supabase';
+import { GlobalLoadingProvider } from '@/components/layout/GlobalLoadingProvider';
+import { AppRouteLoading } from '@/components/layout/AppRouteLoading';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [slowAuth, setSlowAuth] = useState(false);
@@ -63,43 +65,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
 
     const refreshAuthIfNeeded = async () => {
-      if (shouldThrottle('auth_refresh_ts', 15000)) return;
+      if (shouldThrottle('auth_refresh_ts', 20000)) return;
+
       let hasUser = false;
-      let didRefresh = false;
 
       try {
-        for (let i = 0; i < 3; i++) {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            hasUser = true;
-            const expiresAtMs = (session.expires_at || 0) * 1000;
-            const needsRefresh = !expiresAtMs || expiresAtMs - Date.now() < 60_000;
-            if (needsRefresh) {
-              await supabase.auth.refreshSession();
-              didRefresh = true;
-            }
-            break;
+        // مسار سريع: قراءة الجلسة محليًا من الـ cookies (بدون مكالمة شبكة)
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          hasUser = true;
+          const expiresAtMs = (session.expires_at || 0) * 1000;
+          const needsRefresh = !expiresAtMs || expiresAtMs - Date.now() < 60_000;
+          if (needsRefresh) {
+            try { await supabase.auth.refreshSession(); } catch {}
           }
-
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            hasUser = true;
-            break;
-          }
-
-          await new Promise((r) => setTimeout(r, 600 + i * 600));
+        } else {
+          // فقط إذا كانت الجلسة غير موجودة نتحقق من الشبكة (مرة واحدة)
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) hasUser = true;
+          } catch {}
         }
       } catch {}
 
       if (!hasUser) {
-        try {
-          await supabase.auth.refreshSession();
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            hasUser = true;
-            didRefresh = true;
-          }
-        } catch {}
+        try { await supabase.auth.refreshSession(); } catch {}
       }
 
       if (!shouldThrottle('ban_check_ts', 10 * 60 * 1000)) {
@@ -191,7 +181,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const allowedPrefixes = ['/maintenance', '/cleaning'];
       const isAllowed = allowedPrefixes.some(path => pathname.startsWith(path));
       if (!isAllowed) {
-        router.replace('/maintenance');
+        router.replace('/cleaning');
       }
     }
   }, [isEmbed, pathname, role, loading, router]);
@@ -245,39 +235,50 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (isEmbed) {
     if (embedScale === 1) {
-      return <div className="min-h-screen bg-white">{children}</div>;
+      return (
+        <GlobalLoadingProvider>
+          <AppRouteLoading />
+          <div className="min-h-screen bg-white">{children}</div>
+        </GlobalLoadingProvider>
+      );
     }
     return (
-      <div className="min-h-screen bg-white overflow-auto">
-        <div
-          style={{
-            transform: `scale(${embedScale})`,
-            transformOrigin: 'top center',
-            width: `${100 / embedScale}%`,
-            height: `${100 / embedScale}%`
-          }}
-        >
-          {children}
+      <GlobalLoadingProvider>
+        <AppRouteLoading />
+        <div className="min-h-screen bg-white overflow-auto">
+          <div
+            style={{
+              transform: `scale(${embedScale})`,
+              transformOrigin: 'top center',
+              width: `${100 / embedScale}%`,
+              height: `${100 / embedScale}%`
+            }}
+          >
+            {children}
+          </div>
         </div>
-      </div>
+      </GlobalLoadingProvider>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <div className="hidden 2xl:block">
-        <Sidebar />
-      </div>
-      <FloatingSidebar />
+    <GlobalLoadingProvider>
+      <AppRouteLoading />
+      <div className="min-h-screen bg-gray-50 flex">
+        <div className="hidden 2xl:block">
+          <Sidebar />
+        </div>
+        <FloatingSidebar />
 
-      <div className="flex-1 transition-all duration-300 w-full 2xl:mr-64">
-        <Header />
-        <main className="p-3 md:p-4 lg:p-6 xl:p-8">
-          <div className="mx-auto w-full max-w-screen-xl">
-            {children}
-          </div>
-        </main>
+        <div className="flex-1 transition-all duration-300 w-full 2xl:mr-64">
+          <Header />
+          <main className="p-3 md:p-4 lg:p-6 xl:p-8">
+            <div className="mx-auto w-full max-w-screen-xl">
+              {children}
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </GlobalLoadingProvider>
   );
 }

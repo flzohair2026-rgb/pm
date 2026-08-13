@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-export type AppLanguage = "ar" | "en";
+// ✅ دعم أربع لغات: عربي + إنجليزي + أوردو + بنغالي
+export type AppLanguage = "ar" | "en" | "ur" | "bn";
 
 const STORAGE_KEY = "app_language";
 const EVENT_NAME = "app-language-change";
@@ -26,7 +27,10 @@ const writeCookie = (name: string, value: string) => {
 };
 
 const normalizeLanguage = (value: unknown): AppLanguage => {
-  return value === "en" ? "en" : "ar";
+  if (value === "en") return "en";
+  if (value === "ur") return "ur";
+  if (value === "bn") return "bn";
+  return "ar";
 };
 
 export function useAppLanguage() {
@@ -69,7 +73,11 @@ export function useAppLanguage() {
   };
 
   const toggleLanguage = () => {
-    setLanguage(language === "ar" ? "en" : "ar");
+    // دورة: ar → en → ur → bn → ar
+    if (language === "ar") setLanguage("en");
+    else if (language === "en") setLanguage("ur");
+    else if (language === "ur") setLanguage("bn");
+    else setLanguage("ar");
   };
 
   return { language, setLanguage, toggleLanguage };
