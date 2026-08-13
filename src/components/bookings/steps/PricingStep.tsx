@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UnitType, PriceCalculation } from '@/lib/pricing';
 import { Receipt, Percent, Plus, Trash2, ArrowRight, Calculator, Coins, Edit3, AlertTriangle, Info, ChevronDown, ChevronUp, X, CheckCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useAppLanguage } from '@/hooks/useAppLanguage';
+import { useAppLanguage, AppLanguage } from '@/hooks/useAppLanguage';
 
 interface PricingStepProps {
   onNext: (data: PricingResult) => void;
@@ -11,7 +11,7 @@ interface PricingStepProps {
   calculation: PriceCalculation;
   bookingType: 'daily' | 'monthly' | 'yearly';
   initialData?: PricingResult;
-  language?: 'ar' | 'en';
+  language?: AppLanguage;
 }
 
 export interface ExtraFee {

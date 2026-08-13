@@ -9,7 +9,7 @@ import { ConfirmStep } from './steps/ConfirmStep';
 import { UnitType, PriceCalculation, calculateDetailedDuration } from '@/lib/pricing';
 import { User, Calendar, CreditCard, FileCheck, CheckCircle } from 'lucide-react';
 import { format, addDays, addMonths, differenceInCalendarDays, parseISO } from 'date-fns';
-import { useAppLanguage } from '@/hooks/useAppLanguage';
+import { useAppLanguage, AppLanguage } from '@/hooks/useAppLanguage';
 
 type Step = 'customer' | 'unit' | 'price' | 'deposit' | 'confirm';
 
@@ -48,7 +48,7 @@ const STEPS = [
   { id: 'confirm', label: { ar: 'تأكيد', en: 'Confirm' }, icon: CheckCircle },
 ];
 
-export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId?: string; initialQuery?: string; initialCheckIn?: string; initialCheckOut?: string; language?: 'ar' | 'en' }> = ({ initialCustomer, initialUnitId, initialQuery, initialCheckIn, initialCheckOut, language: languageProp }) => {
+export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId?: string; initialQuery?: string; initialCheckIn?: string; initialCheckOut?: string; language?: AppLanguage }> = ({ initialCustomer, initialUnitId, initialQuery, initialCheckIn, initialCheckOut, language: languageProp }) => {
   const { language: storedLanguage } = useAppLanguage();
   const language = languageProp ?? storedLanguage;
   const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
@@ -232,7 +232,7 @@ export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId
             initialData={bookingData.pricingResult}
             onNext={handlePricingConfirm}
             onBack={handleBack}
-            language={language}
+            language={language as 'ar' | 'en'}
           />
         );
       case 'deposit':
@@ -244,7 +244,7 @@ export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId
             initialData={bookingData.depositResult}
             onNext={handleDepositConfirm}
             onBack={handleBack}
-            language={language}
+            language={language as 'ar' | 'en'}
             unit={bookingData.unit}
           />
         );
@@ -254,7 +254,7 @@ export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId
                 data={bookingData}
                 onSuccess={handleFinalSuccess}
                 onBack={handleBack}
-                language={language}
+                language={language as 'ar' | 'en'}
             />
         );
       default:

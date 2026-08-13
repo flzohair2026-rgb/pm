@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { PricingResult } from './PricingStep';
 import { Wallet, CreditCard, Banknote, Loader2, ArrowRight, CheckCircle2, Globe, Coins, ShieldCheck, Receipt, Landmark, LayoutGrid, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useAppLanguage } from '@/hooks/useAppLanguage';
+import { useAppLanguage, AppLanguage } from '@/hooks/useAppLanguage';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
 
 interface DepositStepProps {
@@ -11,7 +11,7 @@ interface DepositStepProps {
   pricingResult: PricingResult;
   customerName?: string;
   initialData?: DepositResult;
-  language?: 'ar' | 'en';
+  language?: AppLanguage;
   unit?: any;
 }
 

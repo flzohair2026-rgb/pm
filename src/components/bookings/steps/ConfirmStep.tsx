@@ -7,13 +7,13 @@ import { calculateDetailedDuration, formatArabicDuration } from '@/lib/pricing';
 import { format } from 'date-fns';
 import { CheckCircle, Loader2, AlertCircle, FileText, Home, Printer, ArrowRight, Mail, MessageCircle, Share2, Eye, User, Calendar, MapPin, CreditCard, ShieldCheck, Zap, Info, Wallet, Receipt, Calculator } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useAppLanguage } from '@/hooks/useAppLanguage';
+import { useAppLanguage, AppLanguage } from '@/hooks/useAppLanguage';
 
 interface ConfirmStepProps {
   data: BookingData;
   onSuccess: () => void;
   onBack: () => void;
-  language?: 'ar' | 'en';
+  language?: AppLanguage;
 }
 
 export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBack, language: languageProp }) => {

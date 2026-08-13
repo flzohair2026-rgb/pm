@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Search, Plus, User, Check, X, Loader2, UserPlus, ChevronDown } from 'lucide-react';
 import { countries } from '@/constants/countries';
-import { useAppLanguage } from '@/hooks/useAppLanguage';
+import { useAppLanguage, AppLanguage } from '@/hooks/useAppLanguage';
 
 const bookingPlatforms = [
   'Booking.com',
@@ -50,7 +50,7 @@ interface CustomerStepProps {
   onNext: (customer: Customer, meta?: { bookingSource?: 'reception'|'platform'|'broker'; platformName?: string; brokerName?: string; brokerId?: string }) => void;
   initialCustomer?: Customer;
   initialQuery?: string;
-  language?: 'ar' | 'en';
+  language?: AppLanguage;
 }
 
 export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCustomer, initialQuery, language: languageProp }) => {

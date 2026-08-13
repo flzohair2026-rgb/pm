@@ -4,7 +4,7 @@ import { UnitType, PricingRule, calculateStayPrice, PriceCalculation, calculateD
 import { Calendar, Users, Info, Check, ArrowRight, Loader2, BedDouble, Ruler, Star, Building2, AlertCircle, Plus, X, Minus, Pencil, User, ChevronDown } from 'lucide-react';
 import { format, addDays, addMonths, differenceInCalendarDays, parseISO, isBefore, startOfToday } from 'date-fns';
 import { arSA } from 'date-fns/locale';
-import { useAppLanguage } from '@/hooks/useAppLanguage';
+import { useAppLanguage, AppLanguage } from '@/hooks/useAppLanguage';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
 import { useUserRole } from '@/hooks/useUserRole';
 
@@ -31,7 +31,7 @@ interface UnitSelectionStepProps {
   };
   selectedCustomer?: Customer;
   initialUnitId?: string;
-  language?: 'ar' | 'en';
+  language?: AppLanguage;
 }
 
 export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, onBack, initialData, selectedCustomer, initialUnitId, language: languageProp }) => {
