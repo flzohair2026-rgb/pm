@@ -1,94 +1,229 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { Lock, Mail, Eye, EyeOff, ArrowRight, MapPin, AlertTriangle } from "lucide-react";
+import { Lock, Mail, Eye, EyeOff, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { supabase } from "@/lib/supabase";
-import { BrowserGeoCoords } from "@/lib/tracking/types";
+import type { BrowserGeoInfo, ClientFingerprint } from "@/lib/tracking/types";
 
 function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [geoStep, setGeoStep] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [geoRequesting, setGeoRequesting] = useState(false);
   const banned = searchParams.get('banned') === '1';
 
-  // استنتاج بيئة الأمان تلقائياً — لا نجبر GPS على HTTP خارج localhost (متصفح غير آمن).
-  const __isLocalhost = typeof window !== 'undefined'
-    ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '::1' || window.location.protocol === 'https:')
-    : true;
-  const __forceReq = (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO_FORCE as string | undefined) === 'true';
-  const __disabledHard = (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO as string | undefined) === 'false';
-  const requireBrowserGeo = !__disabledHard && (__forceReq || __isLocalhost);
-  const skipReason = !requireBrowserGeo
-    ? (__disabledHard ? 'متوقفة عبر متغير البيئة' : `تخطّى الموقع الدقيق لأنك على ${__isLocalhost ? 'localhost/https' : 'اتصال HTTP غير آمن من الشبكة المحلية'}`)
-    : null;
-
-  const requestBrowserGeo = (): Promise<BrowserGeoCoords> => new Promise((resolve, reject) => {
-    if (typeof navigator === 'undefined' || !navigator?.geolocation) {
-      reject(new Error('متصفحك لا يدعم تحديد الموقع الجغرافي. استخدم متصفحًا حديثًا على HTTPS.'));
-      return;
+  // 🖥️ Helper: captures lightweight device fingerprint from the browser
+  // (screen resolution, user language, timezone, platform).
+  // NEVER blocks and ALWAYS returns safe defaults.
+  const captureFingerprint = (): ClientFingerprint => {
+    try {
+      if (typeof window === 'undefined') {
+        return { screen_resolution: null, language: null, timezone: null, platform: null };
+      }
+      const w = window as any;
+      const s = w.screen || {};
+      const tz = (w.Intl && typeof w.Intl.DateTimeFormat === 'function' && typeof w.Intl.DateTimeFormat().resolvedOptions === 'function')
+        ? w.Intl.DateTimeFormat().resolvedOptions().timeZone
+        : null;
+      return {
+        screen_resolution: (typeof s.width === 'number' && typeof s.height === 'number')
+          ? `${s.width}x${s.height}`
+          : null,
+        language: (typeof w.navigator !== 'undefined' && w.navigator.language) || null,
+        timezone: tz || null,
+        platform: (typeof w.navigator !== 'undefined' && w.navigator.platform) || null,
+      };
+    } catch {
+      return { screen_resolution: null, language: null, timezone: null, platform: null };
     }
-    setGeoStep(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos: GeolocationPosition) => {
-        setGeoStep(false);
+  };
+
+  // ============================================================
+  // 🛰️ MANDATORY: request the browser's Precise Geolocation API
+  //   v005a — NO LOGIN IS ALLOWED unless this returns granted=true.
+  //   Triggered ONLY when the user clicks "دخول للنظام" (not on page load).
+  // ============================================================
+  const requestBrowserGeoLocation = (): Promise<BrowserGeoInfo> => {
+    return new Promise((resolve) => {
+      // Safety: if this runs in a non-browser context or geolocation is
+      // unavailable (e.g. insecure HTTP outside localhost) → fail softly
+      // with a clear, user-actionable message.
+      if (typeof window === 'undefined' ||
+          typeof (window as any).navigator === 'undefined' ||
+          !(window as any).navigator.geolocation ||
+          typeof (window as any).navigator.geolocation.getCurrentPosition !== 'function') {
         resolve({
-          lat: Number(pos.coords.latitude.toFixed(6)),
-          lon: Number(pos.coords.longitude.toFixed(6)),
-          accuracy_meters: pos.coords.accuracy ? Number(pos.coords.accuracy.toFixed(1)) : null,
-          altitude_meters: pos.coords.altitude ? Number(pos.coords.altitude.toFixed(1)) : null,
-          heading_deg: pos.coords.heading ?? null,
-          speed_mps: pos.coords.speed ?? null,
-          source: 'browser_w3c',
-          granted_at: new Date().toISOString(),
+          granted: false,
+          latitude: null,
+          longitude: null,
+          error_code: 99,
+          error_message:
+            (typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:' && !(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+              ? 'GEO_INSECURE_CONTEXT_HTTPS_REQUIRED'
+              : 'GEO_UNAVAILABLE_NO_BROWSER_SUPPORT',
         });
-      },
-      (err: GeolocationPositionError) => {
-        setGeoStep(false);
-        let msg = 'تم رفض إذن تحديد الموقع من قبلك.';
-        if (err?.code === 1) msg = '❌ رفضت إذن تحديد الموقع — لا يمكن تسجيل الدخول بدون السماح بالموقع الجغرافي.';
-        if (err?.code === 2) msg = '❌ تعذر تحديد موقعك (GPS / Wi-Fi متوقف). فعّل خدمات الموقع ثم أعد المحاولة.';
-        if (err?.code === 3) msg = '❌ انتهت مهلة طلب تحديد الموقع. أعد المحاولة.';
-        reject(new Error(msg));
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
-    );
-  });
+        return;
+      }
+
+      const navGeo = (window as any).navigator.geolocation;
+      let settled = false;
+      const safeResolve = (val: BrowserGeoInfo) => {
+        if (settled) return;
+        settled = true;
+        resolve(val);
+      };
+
+      // 10-second hard timeout (user must respond to prompt or GPS must return)
+      const timeoutTimer = setTimeout(() => {
+        safeResolve({
+          granted: false,
+          latitude: null,
+          longitude: null,
+          error_code: 3,
+          error_message: 'GEO_TIMEOUT_USER_DID_NOT_RESPOND',
+        });
+      }, 10000);
+
+      try {
+        navGeo.getCurrentPosition(
+          (pos: any) => {
+            clearTimeout(timeoutTimer);
+            const c = (pos && pos.coords) ? pos.coords : null;
+            const lat = (c && typeof c.latitude === 'number' && Number.isFinite(c.latitude)) ? c.latitude : null;
+            const lon = (c && typeof c.longitude === 'number' && Number.isFinite(c.longitude)) ? c.longitude : null;
+            safeResolve({
+              granted: (lat !== null && lon !== null),
+              latitude: lat,
+              longitude: lon,
+            });
+          },
+          (err: any) => {
+            clearTimeout(timeoutTimer);
+            // GeolocationPositionError codes: 1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT
+            const code = (err && typeof err.code === 'number') ? err.code : 0;
+            const msg = (err && typeof err.message === 'string') ? err.message : 'Unknown geolocation error';
+            const human =
+              code === 1 ? 'GEO_PERMISSION_DENIED'
+              : code === 2 ? 'GEO_POSITION_UNAVAILABLE'
+              : code === 3 ? 'GEO_TIMEOUT'
+              : `GEO_ERROR_${code}`;
+            safeResolve({
+              granted: false,
+              latitude: null,
+              longitude: null,
+              error_code: code,
+              error_message: `${human}: ${msg}`,
+            });
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 9500,          // slightly less than our hard 10s timer above
+            maximumAge: 30 * 1000,  // accept a cached position up to 30s old (faster UX)
+          }
+        );
+      } catch (e: any) {
+        clearTimeout(timeoutTimer);
+        safeResolve({
+          granted: false,
+          latitude: null,
+          longitude: null,
+          error_code: 98,
+          error_message: `GEO_EXCEPTION: ${String(e?.message || e || 'unknown')}`,
+        });
+      }
+    });
+  };
+
+  // Human-readable Arabic error for each geolocation failure code
+  const humanizeGeoError = (geo: BrowserGeoInfo): string => {
+    const code = geo.error_code;
+    const raw = geo.error_message || '';
+    if (raw.includes('GEO_INSECURE_CONTEXT_HTTPS_REQUIRED')) {
+      return 'يجب فتح النظام بروتوكول HTTPS آمن لتفعيل خدمة تحديد الموقع، أو استخدم localhost للتجربة المحلية.';
+    }
+    if (raw.includes('GEO_UNAVAILABLE_NO_BROWSER_SUPPORT')) {
+      return 'متصفحك لا يدعم خدمة تحديد الموقع. جرّب Chrome أو Edge الحديث.';
+    }
+    if (code === 1 || raw.includes('GEO_PERMISSION_DENIED')) {
+      return 'تم رفض صلاحية تحديد الموقع. يجب السماح بالوصول للموقع ثم المحاولة مجدداً.';
+    }
+    if (code === 2 || raw.includes('GEO_POSITION_UNAVAILABLE')) {
+      return 'تعذر تحديد موقع جهازك حالياً. تحقق من تشغيل خدمة الموقع (GPS) في جهازك ثم أعد المحاولة.';
+    }
+    if (code === 3 || raw.includes('GEO_TIMEOUT')) {
+      return 'لم يتم الرد على طلب تفعيل الموقع خلال 10 ثواني. أعد المحاولة واسمح بالوصول فور ظهور الرسالة.';
+    }
+    return 'حدث خطأ أثناء طلب صلاحية تحديد الموقع. أعد المحاولة.';
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
-    let browserGeo: BrowserGeoCoords | null = null;
+    const fingerprint = captureFingerprint();
+
+    // ============================================================
+    // STEP 0 (MANDATORY v005a): REQUEST BROWSER GEO PERMISSION
+    //   If this fails for ANY reason → we DO NOT call signInWithPassword.
+    //   We still log a LOGIN_FAILURE audit record with the exact reason.
+    // ============================================================
+    setGeoRequesting(true);
+    const browserGeo: BrowserGeoInfo = await requestBrowserGeoLocation();
+    setGeoRequesting(false);
+
+    if (!browserGeo.granted) {
+      const userMsg = humanizeGeoError(browserGeo);
+      // 🔥 Log this GEO-denial as a LOGIN_FAILURE audit (fire & forget)
+      try {
+        void fetch('/api/audit/log-login-failure', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            error: browserGeo.error_message || 'GEO_CONDITION_FAILED',
+            ...fingerprint,
+            browser_geo_granted: false,
+            browser_geo_lat: null,
+            browser_geo_lon: null,
+            browser_geo_error_code: browserGeo.error_code ?? null,
+          }),
+        }).catch(() => {});
+      } catch {}
+      setError(userMsg);
+      setIsLoading(false);
+      return;  // ⛔ HALT LOGIN FLOW — no signIn attempt
+    }
 
     try {
-      // 🛑 🛑 🛑 الموقع الجغرافي إلزامي قبل تسجيل الدخول — يُنفذ أولاً
-      if (requireBrowserGeo) {
-        try {
-          browserGeo = await requestBrowserGeo();
-        } catch (geoErr: any) {
-          const msg = geoErr?.message || 'فشل تحديد الموقع الجغرافي.';
-          setError(msg);
-          // لا نكمل أي خطوة أخرى — حتى لا يتم إرسال كلمة المرور على الإطلاق
-          setIsLoading(false);
-          return;
-        }
-      }
-
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
+        // 🔥 LOGIN FAILURE AUDIT — fire & forget, NEVER block the UX
+        try {
+          void fetch('/api/audit/log-login-failure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email,
+              error: error?.message || 'Unknown auth failure',
+              ...fingerprint,
+              browser_geo_granted: true,
+              browser_geo_lat: browserGeo.latitude,
+              browser_geo_lon: browserGeo.longitude,
+            }),
+          }).catch(() => {});
+        } catch {}
         throw error;
       }
 
@@ -102,6 +237,7 @@ function LoginInner() {
           router.refresh();
           return;
         }
+        // Cache the successful check for 1 hour to prevent immediate redundant checks in UserMenu
         localStorage.setItem('auth_ban_check_ts', Date.now().toString());
       }
 
@@ -117,37 +253,30 @@ function LoginInner() {
         });
       } catch {}
 
-      // ✅ Audit & Access Tracking — نرسل معه الإحداثيات الدقيقة (إذا توفرت)
+      // ✅ Audit & Access Tracking — fire & forget, NEVER block login.
+      // Now includes:
+      //   · device fingerprint (screen/lang/tz)
+      //   · server-resolved GEO location (IP-based → country/city/ISP)
+      //   · 🔥 BROWSER PRECISE coords (GPS/WiFi → higher accuracy) — now mandatory
       try {
-        const body: Record<string, any> = {};
-        if (browserGeo) body.browser_geo = browserGeo;
-        const sessionRes = await fetch('/api/tracking/session', {
+        void fetch('/api/tracking/session', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        }).catch(() => null);
-
-        if (requireBrowserGeo && sessionRes && !sessionRes.ok) {
-          let serverMsg = 'تم رفض تسجيل الدخول من جهة الخادم بسبب فقدان بيانات الموقع.';
-          try {
-            const sbody = await sessionRes.json().catch(() => null);
-            if (sbody?.error) serverMsg = sbody.error;
-            if (sbody?.detail) serverMsg = `${serverMsg} — ${sbody.detail}`;
-          } catch {}
-          await supabase.auth.signOut().catch(() => {});
-          setError(serverMsg);
-          setIsLoading(false);
-          return;
-        }
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...fingerprint,
+            browser_geo_granted: true,
+            browser_geo_lat: browserGeo.latitude,
+            browser_geo_lon: browserGeo.longitude,
+          }),
+        }).catch(() => {});
       } catch {}
 
       router.push("/");
-      router.refresh();
+      router.refresh(); // Refresh to update middleware state
     } catch (err: any) {
       setError(err.message || "حدث خطأ أثناء تسجيل الدخول");
     } finally {
       setIsLoading(false);
-      setGeoStep(false);
     }
   };
 
@@ -234,37 +363,6 @@ function LoginInner() {
               </Link>
             </div>
 
-            {requireBrowserGeo ? (
-              <div className="bg-white/5 border border-white/15 rounded-xl p-3 flex items-start gap-2.5">
-                <div className="shrink-0 w-8 h-8 rounded-lg bg-blue-500/20 text-blue-100 flex items-center justify-center">
-                  <MapPin className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-blue-100 mb-0.5">الموقع الجغرافي إلزامي</p>
-                  <p className="text-[11px] text-blue-200/80 leading-snug">
-                    قبل إرسال كلمة المرور، سيطلب المتصفح منك <span className="font-semibold">السماح بتحديد موقعك الدقيق</span>.
-                    يُرفض دخولك تلقائيًا إذا رفضت الإذن أو تعطل GPS / Wi-Fi.
-                    الصفحة تعمل فقط على <code className="px-1 py-0.5 rounded bg-white/10 text-[10px] mx-0.5">HTTPS</code> أو localhost.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-amber-500/10 border border-amber-400/40 rounded-xl p-3 flex items-start gap-2.5">
-                <div className="shrink-0 w-8 h-8 rounded-lg bg-amber-500/20 text-amber-100 flex items-center justify-center">
-                  <AlertTriangle className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-amber-200 mb-0.5">الموقع الدقيق متوقّف مؤقتاً: {skipReason}</p>
-                  <p className="text-[11px] text-amber-100/80 leading-snug">
-                    تم تخطي شرط خطوط الطول والعرض لأنك على اتصال HTTP غير آمن.
-                    سيتم تحديد موقعك التقديري فقط عبر عنوان IP ولا يُخزن موقع دقيق.
-                    لتفعيل الإلزامي: استخدم HTTPS أو localhost أو عيّن
-                    <code className="mx-1 px-1 py-0.5 rounded bg-amber-400/20 text-[10px]">NEXT_PUBLIC_REQUIRE_BROWSER_GEO_FORCE=true</code>.
-                  </p>
-                </div>
-              </div>
-            )}
-
             <button
               type="submit"
               disabled={isLoading}
@@ -272,10 +370,12 @@ function LoginInner() {
               suppressHydrationWarning
             >
               {isLoading ? (
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2">
                   <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                  <span className="text-sm font-semibold">
-                    {geoStep ? 'جارٍ تحديد موقعك الدقيق...' : 'جارٍ تسجيل الدخول...'}
+                  <span className="text-sm">
+                    {geoRequesting
+                      ? 'جاري تفعيل تحديد الموقع...'
+                      : 'جاري تسجيل الدخول...'}
                   </span>
                 </div>
               ) : (
@@ -290,12 +390,6 @@ function LoginInner() {
         
         {/* Footer */}
         <div className="bg-blue-950/50 p-4 text-center border-t border-white/10">
-          <div className="flex items-center justify-center gap-1.5 mb-1.5">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-300/80" />
-            <p className="text-[11px] text-amber-200/80 font-semibold">
-              جميع عمليات الدخول تُراقب: موقعك الجغرافي، نوع جهازك، وعنوان IP يحفظون لأغراض الأمن.
-            </p>
-          </div>
           <p className="text-blue-300/60 text-xs">
             © 2026 مساكن فندقية. جميع الحقوق محفوظة.
           </p>

@@ -60,6 +60,39 @@ export default function UserMenu() {
     try {
       try {
         const { data: { user: u } } = await supabase.auth.getUser();
+        // Capture lightweight fingerprint to send to the audit logout API
+        // (so we can correlate SESSION.END with SESSION.START geo/device data)
+        let fingerprint: any = {};
+        try {
+          if (typeof window !== 'undefined') {
+            const w = window as any;
+            const s = w.screen || {};
+            const tz = (w.Intl && typeof w.Intl.DateTimeFormat === 'function' && typeof w.Intl.DateTimeFormat().resolvedOptions === 'function')
+              ? w.Intl.DateTimeFormat().resolvedOptions().timeZone
+              : null;
+            fingerprint = {
+              screen_resolution: (typeof s.width === 'number' && typeof s.height === 'number')
+                ? `${s.width}x${s.height}`
+                : null,
+              language: (typeof w.navigator !== 'undefined' && w.navigator.language) || null,
+              timezone: tz || null,
+            };
+          }
+        } catch {}
+
+        // 🔥 Call the NEW audit logout tracker BEFORE signOut
+        // (we still have valid auth cookies so auth.uid() + role resolve)
+        // Fire-and-forget with .catch — NEVER block actual logout.
+        try {
+          void fetch('/api/tracking/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(fingerprint),
+          }).catch(() => {});
+        } catch {}
+
+        // Also preserve the legacy system_events write (for audit-log legacy page)
         try {
           await supabase.from('system_events').insert({
             event_type: 'user_logout',
