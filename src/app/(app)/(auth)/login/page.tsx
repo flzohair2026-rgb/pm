@@ -19,11 +19,20 @@ function LoginInner() {
   const [error, setError] = useState<string | null>(null);
   const banned = searchParams.get('banned') === '1';
 
-  const requireBrowserGeo = (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO as string | undefined) !== 'false';
+  // استنتاج بيئة الأمان تلقائياً — لا نجبر GPS على HTTP خارج localhost (متصفح غير آمن).
+  const __isLocalhost = typeof window !== 'undefined'
+    ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '::1' || window.location.protocol === 'https:')
+    : true;
+  const __forceReq = (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO_FORCE as string | undefined) === 'true';
+  const __disabledHard = (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO as string | undefined) === 'false';
+  const requireBrowserGeo = !__disabledHard && (__forceReq || __isLocalhost);
+  const skipReason = !requireBrowserGeo
+    ? (__disabledHard ? 'متوقفة عبر متغير البيئة' : `تخطّى الموقع الدقيق لأنك على ${__isLocalhost ? 'localhost/https' : 'اتصال HTTP غير آمن من الشبكة المحلية'}`)
+    : null;
 
   const requestBrowserGeo = (): Promise<BrowserGeoCoords> => new Promise((resolve, reject) => {
     if (typeof navigator === 'undefined' || !navigator?.geolocation) {
-      reject(new Error('متصفحك الحالي لا يدعم تحديد الموقع. استخدم نسخة حديثة من Chrome أو Edge أو Safari.'));
+      reject(new Error('متصفحك لا يدعم تحديد الموقع الجغرافي. استخدم متصفحًا حديثًا على HTTPS.'));
       return;
     }
     setGeoStep(true);
@@ -43,10 +52,10 @@ function LoginInner() {
       },
       (err: GeolocationPositionError) => {
         setGeoStep(false);
-        let msg = 'تعذّر تحديد موقعك، يُرجى المحاولة مرة أخرى.';
-        if (err?.code === 1) msg = 'يُرجى السماح للتطبيق بالوصول إلى موقعك — لا يمكن تسجيل الدخول دون تفعيل الموقع.';
-        if (err?.code === 2) msg = 'لم يتمكّن النظام من تحديد موقعك. تفقد أن خدمات تحديد الموقع (GPS أو الإنترنت) مفعّلة في جهازك.';
-        if (err?.code === 3) msg = 'استغرق تحديد موقعك وقتاً أطول من المتوقع. أغلق النافذة ثم أعد فتح التطبيق وحاول مجدداً.';
+        let msg = 'تم رفض إذن تحديد الموقع من قبلك.';
+        if (err?.code === 1) msg = '❌ رفضت إذن تحديد الموقع — لا يمكن تسجيل الدخول بدون السماح بالموقع الجغرافي.';
+        if (err?.code === 2) msg = '❌ تعذر تحديد موقعك (GPS / Wi-Fi متوقف). فعّل خدمات الموقع ثم أعد المحاولة.';
+        if (err?.code === 3) msg = '❌ انتهت مهلة طلب تحديد الموقع. أعد المحاولة.';
         reject(new Error(msg));
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
@@ -225,16 +234,32 @@ function LoginInner() {
               </Link>
             </div>
 
-            {requireBrowserGeo && (
+            {requireBrowserGeo ? (
               <div className="bg-white/5 border border-white/15 rounded-xl p-3 flex items-start gap-2.5">
                 <div className="shrink-0 w-8 h-8 rounded-lg bg-blue-500/20 text-blue-100 flex items-center justify-center">
                   <MapPin className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-blue-100 mb-0.5">الموقع الجغرافي مطلوب</p>
-                  <p className="text-[11px] text-blue-200/85 leading-snug">
-                    قبل دخولك سيطلب المتصفح منك <span className="font-semibold">السماح بتحديد موقعك</span> لأغراض حماية النظام.
-                    يُرجى اختيار <span className="font-semibold">السماح</span> لعدم إيقاف عملية الدخول.
+                  <p className="text-xs font-bold text-blue-100 mb-0.5">الموقع الجغرافي إلزامي</p>
+                  <p className="text-[11px] text-blue-200/80 leading-snug">
+                    قبل إرسال كلمة المرور، سيطلب المتصفح منك <span className="font-semibold">السماح بتحديد موقعك الدقيق</span>.
+                    يُرفض دخولك تلقائيًا إذا رفضت الإذن أو تعطل GPS / Wi-Fi.
+                    الصفحة تعمل فقط على <code className="px-1 py-0.5 rounded bg-white/10 text-[10px] mx-0.5">HTTPS</code> أو localhost.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-500/10 border border-amber-400/40 rounded-xl p-3 flex items-start gap-2.5">
+                <div className="shrink-0 w-8 h-8 rounded-lg bg-amber-500/20 text-amber-100 flex items-center justify-center">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-amber-200 mb-0.5">الموقع الدقيق متوقّف مؤقتاً: {skipReason}</p>
+                  <p className="text-[11px] text-amber-100/80 leading-snug">
+                    تم تخطي شرط خطوط الطول والعرض لأنك على اتصال HTTP غير آمن.
+                    سيتم تحديد موقعك التقديري فقط عبر عنوان IP ولا يُخزن موقع دقيق.
+                    لتفعيل الإلزامي: استخدم HTTPS أو localhost أو عيّن
+                    <code className="mx-1 px-1 py-0.5 rounded bg-amber-400/20 text-[10px]">NEXT_PUBLIC_REQUIRE_BROWSER_GEO_FORCE=true</code>.
                   </p>
                 </div>
               </div>
@@ -268,11 +293,11 @@ function LoginInner() {
           <div className="flex items-center justify-center gap-1.5 mb-1.5">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-300/80" />
             <p className="text-[11px] text-amber-200/80 font-semibold">
-              مع تحيات الدعم الفني
+              جميع عمليات الدخول تُراقب: موقعك الجغرافي، نوع جهازك، وعنوان IP يحفظون لأغراض الأمن.
             </p>
           </div>
           <p className="text-blue-300/60 text-xs">
-            © 2026 مساكن الرفاهية. جميع الحقوق محفوظة.
+            © 2026 مساكن فندقية. جميع الحقوق محفوظة.
           </p>
         </div>
       </div>

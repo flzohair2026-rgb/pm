@@ -82,7 +82,7 @@ export default function AuditLogsPage() {
   const [filterCountry, setFilterCountry] = useState<string>('ALL');
   const [filterCity, setFilterCity] = useState<string>('ALL');
 
-  const [limit] = useState(300);
+  const [limit] = useState(200);
   const [showFilters, setShowFilters] = useState(true);
 
   useEffect(() => {
@@ -100,18 +100,15 @@ export default function AuditLogsPage() {
 
       const { data: myProfile } = await supabase
         .from('profiles')
-        .select('role, is_super_admin')
+        .select('role')
         .eq('id', user.id)
         .maybeSingle();
 
       const role = (myProfile as any)?.role || null;
-      const isSuperFlag = Boolean((myProfile as any)?.is_super_admin);
       setCurrentUserRole(role);
 
-      const envSuper = (process.env.NEXT_PUBLIC_SUPER_ADMIN_ID as string | undefined)?.trim();
-      const isSuper = isSuperFlag || (envSuper && envSuper === user.id);
-
-      if (role !== 'admin' && role !== 'super_admin' && !isSuper) {
+      const isSuper = (process.env.NEXT_PUBLIC_SUPER_ADMIN_ID as string | undefined) === user.id;
+      if (role !== 'admin' && !isSuper) {
         setAccessDenied(true);
         return;
       }
@@ -122,45 +119,6 @@ export default function AuditLogsPage() {
       setAccessDenied(true);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // 🩹 Fallback Cache: السجلات القديمة تكون user_email / user_role فارغة بسبب خلل في
-  // RPC القديم — نعوضها هنا باستعلام واحد على الجداول الأصلية.
-  const hydrateUsers = async (rows: AuditLog[]): Promise<AuditLog[]> => {
-    try {
-      const missingIds = Array.from(new Set(
-        rows
-          .filter(r => r.user_id && (!r.user_email || !r.user_role))
-          .map(r => String(r.user_id))
-      )).slice(0, 300);
-      if (!missingIds.length) return rows;
-
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, role, email, full_name, is_deleted, is_banned')
-        .in('id', missingIds)
-        .limit(300);
-
-      const profilesMap = new Map<string, any>();
-      (profiles || []).forEach((p: any) => profilesMap.set(String(p.id), p));
-
-      return rows.map(r => {
-        if (!r.user_id) return r;
-        if (r.user_email && r.user_role) return r;
-        const pr = profilesMap.get(String(r.user_id));
-        if (!pr) return r;
-        const isGone = Boolean(pr.is_deleted) || Boolean(pr.is_banned);
-        return {
-          ...r,
-          user_email: r.user_email || pr.email || pr.full_name ||
-                      (isGone ? '⚠️ مستخدم محذوف/محظور' : null),
-          user_role: r.user_role || pr.role || null,
-        } as AuditLog;
-      });
-    } catch (e: any) {
-      console.warn('[audit] hydrate-users fallback failed:', e?.message || e);
-      return rows;
     }
   };
 
@@ -180,9 +138,7 @@ export default function AuditLogsPage() {
         .rpc('get_audit_logs', params);
 
       if (error) throw error;
-      const raw = (data || []) as AuditLog[];
-      const fixed = await hydrateUsers(raw);
-      setLogs(fixed);
+      setLogs((data || []) as AuditLog[]);
     } catch (err: any) {
       console.error('[audit] fetch error:', err?.message || err);
       alert('تعذر تحميل سجل النشاط. تأكد من تطبيق الـ Migration على قاعدة البيانات.');
@@ -525,50 +481,10 @@ export default function AuditLogsPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col">
-                          {(() => {
-                            const emailRaw = log.user_email;
-                            const hasAnyData = Boolean(log.user_id);
-                            const isHardDeleted = !hasAnyData || (
-                              !emailRaw && emailRaw !== null &&
-                              typeof emailRaw === 'string' && emailRaw.startsWith('⚠️')
-                            );
-                            let displayEmail = emailRaw;
-                            if (!displayEmail && !log.user_id) {
-                              displayEmail = 'بيانات مجهولة (حدث قبل تسجيل الدخول)';
-                            } else if (!displayEmail) {
-                              displayEmail = 'لا يوجد بريد مسجّل في السجل (تُعوّض من الجدول الآن)';
-                            }
-                            const roleLabel = log.user_role
-                              ? (ROLE_LABELS[log.user_role] || log.user_role)
-                              : (log.user_id ? 'دور غير محدد في السجل — جارٍ التعويض...' : '—');
-                            return (
-                              <>
-                                <span
-                                  className={`font-semibold ${
-                                    String(displayEmail).includes('⚠️')
-                                      ? 'text-red-700'
-                                      : String(displayEmail).includes('لا يوجد')
-                                        ? 'text-amber-700'
-                                        : 'text-gray-900'
-                                  }`}
-                                >
-                                  {displayEmail}
-                                </span>
-                                <span
-                                  className={`text-xs mt-0.5 ${
-                                    roleLabel.includes('غير محدد') ? 'text-amber-600' : 'text-gray-500'
-                                  }`}
-                                >
-                                  {roleLabel}
-                                  {log.user_id && (
-                                    <span className="ml-1 mr-1 text-[10px] text-gray-400 font-mono opacity-80">
-                                      #{String(log.user_id).slice(0, 8)}
-                                    </span>
-                                  )}
-                                </span>
-                              </>
-                            );
-                          })()}
+                          <span className="font-semibold text-gray-900">{log.user_email || 'مستخدم محذوف'}</span>
+                          <span className="text-xs text-gray-500 mt-0.5">
+                            {log.user_role ? ROLE_LABELS[log.user_role] || log.user_role : 'بدون دور'}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-4">

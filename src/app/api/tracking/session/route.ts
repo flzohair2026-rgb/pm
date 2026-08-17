@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
-      return NextResponse.json({ error: 'لم يتمكّن النظام من التعرف على جلستك. أغلق المتصفح ثم سجّل الدخول مجدداً.' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // 🟡 1) Parse browser body — for exact geolocation
@@ -49,11 +49,36 @@ export async function POST(request: Request) {
       }
     } catch {}
 
+    const userAgent = request.headers.get('user-agent');
+    const device = parseDevice(userAgent);
+    const ip = getClientIp(request);
+
     // 🛑 MANDATORY CHECK — server-side enforcement of browser geolocation.
     // The UI blocks it early too, but this is the source of truth so user
     // can never bypass by rewriting the client-side JS.
-    const enforceGeo = (process.env.REQUIRE_BROWSER_GEO as string | undefined) !== 'false'
-      && (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO as string | undefined) !== 'false';
+    //
+    // HOWEVER — W3C Geolocation works only on HTTPS or localhost.
+    // When accessing over a LAN IP (http://192.168.x.y:3000) Chrome/Safari
+    // silently disable the permission prompt, so every login fails without
+    // user action. Detect private (RFC 1918) IPs automatically and skip
+    // enforcement in that case, unless ENV FORCE explicitly asks for it.
+    const isPrivateIp = (ipAddr: string | null): boolean => {
+      if (!ipAddr) return true;
+      if (ipAddr === '::1' || ipAddr === '127.0.0.1') return true;
+      if (ipAddr.startsWith('10.')) return true;
+      if (ipAddr.startsWith('192.168.')) return true;
+      if (ipAddr.startsWith('127.')) return true;
+      for (let i = 16; i <= 31; i++) {
+        if (ipAddr.startsWith(`172.${i}.`)) return true;
+      }
+      return false;
+    };
+    const forceReq = (process.env.REQUIRE_BROWSER_GEO_FORCE as string | undefined) === 'true'
+      || (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO_FORCE as string | undefined) === 'true';
+    const disabledHard = (process.env.REQUIRE_BROWSER_GEO as string | undefined) === 'false'
+      || (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO as string | undefined) === 'false';
+    const comingFromPrivateLan = isPrivateIp(ip);
+    const enforceGeo = !disabledHard && (forceReq || !comingFromPrivateLan);
 
     if (enforceGeo && !browserGeo) {
       // Immediately sign out the session because we refuse login without location.
@@ -62,17 +87,20 @@ export async function POST(request: Request) {
       } catch {}
       return NextResponse.json(
         {
-          error: 'لم يتم تفعيل الموقع الجغرافي، لذلك تم إيقاف تسجيل الدخول لحماية النظام.',
-          detail: 'افتح إعدادات المتصفح وسمح للتطبيق بالوصول إلى موقعك، ثم أعد المحاولة.',
+          error: '❌ تم رفض الدخول من الخادم — فشل تحقق الموقع الجغرافي.',
+          detail: comingFromPrivateLan
+            ? 'يجب تعيين NEXT_PUBLIC_REQUIRE_BROWSER_GEO_FORCE=true لتشغيل الإلزامي على الشبكة المحلية، أو استخدم HTTPS / localhost.'
+            : 'يجب السماح لتطبيق مساكن فندقية بالوصول إلى موقعك الدقيق قبل تسجيل الدخول.',
           requires_geo: true,
+          coming_from_private_lan: comingFromPrivateLan,
         },
         { status: 403 }
       );
     }
 
-    const userAgent = request.headers.get('user-agent');
-    const device = parseDevice(userAgent);
-    const ip = getClientIp(request);
+    // const userAgent = ... (DELETED DUPLICATE)
+    // const device = ...   (DELETED DUPLICATE)
+    // const ip = ...       (DELETED DUPLICATE)
 
     // 🌐 IP geolocation lookup — fail-soft, never blocks
     let location: AuditLogMetadata['location'] = null;
@@ -158,10 +186,7 @@ export async function POST(request: Request) {
   } catch (err: any) {
     console.error('[tracking/session] error:', err?.message || err);
     return NextResponse.json(
-      {
-        error: 'تعذّر إكمال عملية الدخول بسبب خطأ داخلي مؤقت.',
-        detail: 'أغلق المتصفح ثم أعد فتح التطبيق وحاول مرة أخرى. إذا استمرّ المشكلة تواصل مع الإدارة.',
-      },
+      { error: 'Tracking failed', detail: String(err?.message || err) },
       { status: 500 }
     );
   }
