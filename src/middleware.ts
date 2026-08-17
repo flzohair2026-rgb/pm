@@ -1,61 +1,46 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-type CookieToSet = {
-  name: string
-  value: string
-  options?: Record<string, any>
+const AUTH_COOKIE_RE = /^sb-[a-z0-9]+-auth-token$/i
+
+function b64UrlDecode(s: string): string {
+  const base64 = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = base64.length % 4
+  const withPad = pad === 0 ? base64 : base64 + '='.repeat(4 - pad)
+  return atob(withPad)
+}
+
+function hasValidAuthCookieLocal(request: NextRequest): boolean {
+  const all = request.cookies.getAll()
+  for (const c of all) {
+    if (AUTH_COOKIE_RE.test(c.name)) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(c.value))
+        const accessToken = parsed?.access_token || parsed?.[0]?.access_token
+        if (!accessToken) continue
+        const parts = String(accessToken).split('.')
+        if (parts.length < 2) continue
+        const payload = JSON.parse(b64UrlDecode(parts[1]))
+        const exp = Number(payload?.exp)
+        if (!exp) continue
+        if (Date.now() / 1000 < exp - 30) {
+          return true
+        }
+      } catch {}
+    }
+  }
+  return false
 }
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({
+  const response = NextResponse.next({
     request: {
       headers: request.headers,
     },
   })
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const userExists = hasValidAuthCookieLocal(request)
 
-  if (!supabaseUrl || !supabaseKey) {
-    return response
-  }
-
-  const supabase = createServerClient(
-    supabaseUrl,
-    supabaseKey,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: CookieToSet[]) {
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          })
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, { path: '/', ...options })
-          })
-        },
-      },
-    }
-  )
-
-  let user = null
-  try {
-    const { data: sessionData } = await supabase.auth.getSession()
-    const session = sessionData?.session ?? null
-    if (session?.user) {
-      user = session.user
-    } else if (request.nextUrl.pathname.startsWith('/login')) {
-      const { data: userRes } = await supabase.auth.getUser()
-      user = userRes?.user ?? null
-    }
-  } catch {}
-
-  if (user && request.nextUrl.pathname.startsWith('/login')) {
+  if (userExists && request.nextUrl.pathname.startsWith('/login')) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 

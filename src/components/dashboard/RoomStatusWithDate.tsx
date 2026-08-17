@@ -55,7 +55,15 @@ export default function RoomStatusWithDate({
   });
   const emptyUnitsRetryRef = useRef(0);
   const emptyUnitsKeyRef = useRef<string>('');
+  const loadingRef = useRef(false);
+  const selectedDateRef = useRef(selectedDate);
+  const hotelIdRef = useRef(hotelId);
+  const inFlightKeyRef = useRef<string>('');
   const typeInfoMapRef = useRef(typeInfoMap);
+
+  useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
+  useEffect(() => { hotelIdRef.current = hotelId; }, [hotelId]);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
   useEffect(() => {
     typeInfoMapRef.current = typeInfoMap;
   }, [typeInfoMap]);
@@ -108,33 +116,19 @@ export default function RoomStatusWithDate({
   }, [hotelId]);
 
   const load = useCallback(async (isAutoRetry = false, preserveEmpty = false) => {
-    if (preserveEmpty && loading) return;
-    setLoading(preserveEmpty ? loading : true);
+    const curHotel = hotelIdRef.current;
+    const curDate = selectedDateRef.current;
+    const key = `${curHotel ?? 'all'}__${curDate}`;
+    if (inFlightKeyRef.current === key && !isAutoRetry) return;
+    if (preserveEmpty && loadingRef.current) return;
+    inFlightKeyRef.current = key;
+    loadingRef.current = true;
+    setLoading(true);
     setError(null);
     try {
-        const ensureAuthReady = async () => {
-          try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user) return true;
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) return true;
-          } catch {}
-          return false;
-        };
-
-        const authReady = await ensureAuthReady();
-        if (!authReady) {
-          if (isAutoRetry) {
-            setTimeout(() => load(true, true), 2200);
-          } else {
-            setTimeout(() => load(true, true), 1200);
-          }
-          return;
-        }
-
         const { data: snapshot, error: snapshotError } = await supabase.rpc('get_room_status_snapshot', {
-          p_hotel_id: hotelId && hotelId !== 'all' ? hotelId : null,
-          p_date: selectedDate
+          p_hotel_id: curHotel && curHotel !== 'all' ? curHotel : null,
+          p_date: curDate
         });
 
         if (snapshotError) throw snapshotError;
@@ -155,37 +149,18 @@ export default function RoomStatusWithDate({
         const invoiceTotals = (((snapshot as any)?.invoice_totals ?? []) as any[]);
 
         if (!unitsData || unitsData.length === 0) {
-          const hadUnitsBefore = (unitsRef.current || []).length > 0;
-          const key = `${hotelId || 'all'}|${selectedDate}`;
-          if (emptyUnitsKeyRef.current !== key) {
-            emptyUnitsKeyRef.current = key;
-            emptyUnitsRetryRef.current = 0;
-          }
-          emptyUnitsRetryRef.current += 1;
-
-          if (emptyUnitsRetryRef.current <= 3) {
-            setTimeout(() => load(true, true), 900 + emptyUnitsRetryRef.current * 300);
-            return;
-          }
-
-          if (hadUnitsBefore && emptyUnitsRetryRef.current <= 5) {
-            setTimeout(() => load(true, true), 4500);
-            return;
-          }
-
-          // تجاوزت المحاولات — لا نكمل بلا نهاية، ولو كانت القائمة سابقاً معبأة نحافظ عليها
+          const hadUnitsBefore = (unitsRef.current || []).length > 0 || (initialUnits || []).length > 0;
           if (hadUnitsBefore) {
             setLoading(false);
             return;
           }
-
+          if (!isAutoRetry) {
+            setTimeout(() => load(true, true), 1400);
+            return;
+          }
           setError(t('لا توجد وحدات لهذا الفندق أو لا توجد صلاحية للعرض.', 'No units for this hotel or no permission to view.'));
           return;
         }
-
-        // نجح التحميل وبيانات موجودة — نصفر عدادات المحاولة
-        emptyUnitsRetryRef.current = 0;
-        emptyUnitsKeyRef.current = `${hotelId || 'all'}|${selectedDate}`;
 
         const typeMap = new Map<string, any>();
         if (typesData.length === 0) setUnitTypesIssue('empty_unit_types');
@@ -512,10 +487,14 @@ export default function RoomStatusWithDate({
           full: err
         });
 
-        // Auto-retry: مرة واحدة فقط في حالة الخطأ (لا تكرار غير منتهي)
-        if (!isAutoRetry && !units.length) {
-          const retryDelay = 2500;
-          console.log(`Auto-retrying load ONCE in ${retryDelay}ms...`);
+        const hasAnyUnits = (unitsRef.current || []).length > 0 || (initialUnits || []).length > 0;
+        if (hasAnyUnits) {
+          setLoading(false);
+          return;
+        }
+
+        if (!isAutoRetry) {
+          const retryDelay = 1200;
           setTimeout(() => load(true, true), retryDelay);
           return;
         }
@@ -523,11 +502,60 @@ export default function RoomStatusWithDate({
         const errorMsg = err?.message || String(err) || t('حدث خطأ غير معروف', 'Unknown error');
         setError(`${t('حدث خطأ أثناء تحميل حالة الوحدات:', 'Error loading units:')} ${errorMsg}`);
       } finally {
+        loadingRef.current = false;
+        inFlightKeyRef.current = '';
         setLoading(false);
       }
-  }, [language, selectedDate, hotelId, loading, units.length]);
+  }, [language]);
+
+  const initialUnitsSignature = useMemo(() => {
+    if (!Array.isArray(initialUnits) || initialUnits.length === 0) return '';
+    return `${initialUnits.length}:${initialUnits[0]?.id ?? ''}:${String((initialUnits[0] as any)?.next_action ?? '')}`;
+  }, [initialUnits]);
 
   useEffect(() => {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    const hasRichFields =
+      Array.isArray(initialUnits) &&
+      initialUnits.length > 0 &&
+      initialUnits.some((u) =>
+        (u.next_action != null) ||
+        (u.booking_id != null) ||
+        (u.payment_due_status != null) ||
+        (u.guest_name != null) ||
+        (u.has_temp_res === true) ||
+        (u.remaining_days != null)
+      );
+
+    const initialUnitsValid =
+      Array.isArray(initialUnits) &&
+      initialUnits.length > 0 &&
+      selectedDate === todayStr &&
+      (
+        hasRichFields ||
+        units.length === initialUnits.length
+      );
+
+    if (initialUnitsValid) {
+      const typeMap = new Map<string, { id: string; name: string }>();
+      initialUnits.forEach((u) => {
+        if (u.unit_type_id && u.unit_type_name) {
+          typeMap.set(u.unit_type_id, { id: u.unit_type_id, name: u.unit_type_name });
+        }
+      });
+      const list = Array.from(typeMap.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, language === 'en' ? 'en' : 'ar')
+      );
+      if (list.length > 0) {
+        setUnitTypes(list);
+        setUnitTypesIssue(null);
+      }
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       await load();
@@ -536,10 +564,10 @@ export default function RoomStatusWithDate({
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [selectedDate, hotelId, initialUnitsSignature, language, load]);
 
   useEffect(() => {
-    const THROTTLE_WINDOW_MS = 35000; // لا أقل من 35 ثانية بين إعادة تحميل بسبب focus/visibility
+    const THROTTLE_WINDOW_MS = 300000; // 5 دقائق على الأقل بين إعادة تحميل بسبب focus/visibility
     let lastRunTs = 0;
     let timeoutId: any = null;
     const schedule = () => {
@@ -566,8 +594,8 @@ export default function RoomStatusWithDate({
 
   useEffect(() => {
     let timeoutId: any = null;
-    const DEBOUNCE_MS = 2500; // تجميع أحداث Realtime قبل إعادة التحميل (لا كل حدث)
-    const THROTTLE_MS = 8000; // لا أقل من 8 ثوانٍ بين إعادة تحميل Realtime
+    const DEBOUNCE_MS = 4000; // تجميع أحداث Realtime قبل إعادة التحميل (لا كل حدث)
+    const THROTTLE_MS = 30000; // 30 ثانية على الأقل بين إعادة تحميل Realtime
     let lastReloadTs = 0;
     const scheduleReload = () => {
       const now = Date.now();

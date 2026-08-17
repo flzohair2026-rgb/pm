@@ -1,28 +1,79 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { Lock, Mail, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { Lock, Mail, Eye, EyeOff, ArrowRight, MapPin, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { supabase } from "@/lib/supabase";
+import { BrowserGeoCoords } from "@/lib/tracking/types";
 
 function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [geoStep, setGeoStep] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const banned = searchParams.get('banned') === '1';
+
+  const requireBrowserGeo = (process.env.NEXT_PUBLIC_REQUIRE_BROWSER_GEO as string | undefined) !== 'false';
+
+  const requestBrowserGeo = (): Promise<BrowserGeoCoords> => new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator?.geolocation) {
+      reject(new Error('متصفحك الحالي لا يدعم تحديد الموقع. استخدم نسخة حديثة من Chrome أو Edge أو Safari.'));
+      return;
+    }
+    setGeoStep(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos: GeolocationPosition) => {
+        setGeoStep(false);
+        resolve({
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lon: Number(pos.coords.longitude.toFixed(6)),
+          accuracy_meters: pos.coords.accuracy ? Number(pos.coords.accuracy.toFixed(1)) : null,
+          altitude_meters: pos.coords.altitude ? Number(pos.coords.altitude.toFixed(1)) : null,
+          heading_deg: pos.coords.heading ?? null,
+          speed_mps: pos.coords.speed ?? null,
+          source: 'browser_w3c',
+          granted_at: new Date().toISOString(),
+        });
+      },
+      (err: GeolocationPositionError) => {
+        setGeoStep(false);
+        let msg = 'تعذّر تحديد موقعك، يُرجى المحاولة مرة أخرى.';
+        if (err?.code === 1) msg = 'يُرجى السماح للتطبيق بالوصول إلى موقعك — لا يمكن تسجيل الدخول دون تفعيل الموقع.';
+        if (err?.code === 2) msg = 'لم يتمكّن النظام من تحديد موقعك. تفقد أن خدمات تحديد الموقع (GPS أو الإنترنت) مفعّلة في جهازك.';
+        if (err?.code === 3) msg = 'استغرق تحديد موقعك وقتاً أطول من المتوقع. أغلق النافذة ثم أعد فتح التطبيق وحاول مجدداً.';
+        reject(new Error(msg));
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
+    );
+  });
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
+    let browserGeo: BrowserGeoCoords | null = null;
+
     try {
+      // 🛑 🛑 🛑 الموقع الجغرافي إلزامي قبل تسجيل الدخول — يُنفذ أولاً
+      if (requireBrowserGeo) {
+        try {
+          browserGeo = await requestBrowserGeo();
+        } catch (geoErr: any) {
+          const msg = geoErr?.message || 'فشل تحديد الموقع الجغرافي.';
+          setError(msg);
+          // لا نكمل أي خطوة أخرى — حتى لا يتم إرسال كلمة المرور على الإطلاق
+          setIsLoading(false);
+          return;
+        }
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -42,7 +93,6 @@ function LoginInner() {
           router.refresh();
           return;
         }
-        // Cache the successful check for 1 hour to prevent immediate redundant checks in UserMenu
         localStorage.setItem('auth_ban_check_ts', Date.now().toString());
       }
 
@@ -58,17 +108,37 @@ function LoginInner() {
         });
       } catch {}
 
-      // ✅ Audit & Access Tracking (new) — fire & forget, never block login
+      // ✅ Audit & Access Tracking — نرسل معه الإحداثيات الدقيقة (إذا توفرت)
       try {
-        void fetch('/api/tracking/session', { method: 'POST' }).catch(() => {});
+        const body: Record<string, any> = {};
+        if (browserGeo) body.browser_geo = browserGeo;
+        const sessionRes = await fetch('/api/tracking/session', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }).catch(() => null);
+
+        if (requireBrowserGeo && sessionRes && !sessionRes.ok) {
+          let serverMsg = 'تم رفض تسجيل الدخول من جهة الخادم بسبب فقدان بيانات الموقع.';
+          try {
+            const sbody = await sessionRes.json().catch(() => null);
+            if (sbody?.error) serverMsg = sbody.error;
+            if (sbody?.detail) serverMsg = `${serverMsg} — ${sbody.detail}`;
+          } catch {}
+          await supabase.auth.signOut().catch(() => {});
+          setError(serverMsg);
+          setIsLoading(false);
+          return;
+        }
       } catch {}
 
       router.push("/");
-      router.refresh(); // Refresh to update middleware state
+      router.refresh();
     } catch (err: any) {
       setError(err.message || "حدث خطأ أثناء تسجيل الدخول");
     } finally {
       setIsLoading(false);
+      setGeoStep(false);
     }
   };
 
@@ -155,6 +225,21 @@ function LoginInner() {
               </Link>
             </div>
 
+            {requireBrowserGeo && (
+              <div className="bg-white/5 border border-white/15 rounded-xl p-3 flex items-start gap-2.5">
+                <div className="shrink-0 w-8 h-8 rounded-lg bg-blue-500/20 text-blue-100 flex items-center justify-center">
+                  <MapPin className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-blue-100 mb-0.5">الموقع الجغرافي مطلوب</p>
+                  <p className="text-[11px] text-blue-200/85 leading-snug">
+                    قبل دخولك سيطلب المتصفح منك <span className="font-semibold">السماح بتحديد موقعك</span> لأغراض حماية النظام.
+                    يُرجى اختيار <span className="font-semibold">السماح</span> لعدم إيقاف عملية الدخول.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isLoading}
@@ -162,7 +247,12 @@ function LoginInner() {
               suppressHydrationWarning
             >
               {isLoading ? (
-                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  <span className="text-sm font-semibold">
+                    {geoStep ? 'جارٍ تحديد موقعك الدقيق...' : 'جارٍ تسجيل الدخول...'}
+                  </span>
+                </div>
               ) : (
                 <>
                   <span>دخول للنظام</span>
@@ -175,8 +265,14 @@ function LoginInner() {
         
         {/* Footer */}
         <div className="bg-blue-950/50 p-4 text-center border-t border-white/10">
+          <div className="flex items-center justify-center gap-1.5 mb-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-300/80" />
+            <p className="text-[11px] text-amber-200/80 font-semibold">
+              مع تحيات الدعم الفني
+            </p>
+          </div>
           <p className="text-blue-300/60 text-xs">
-            © 2026 مساكن فندقية. جميع الحقوق محفوظة.
+            © 2026 مساكن الرفاهية. جميع الحقوق محفوظة.
           </p>
         </div>
       </div>

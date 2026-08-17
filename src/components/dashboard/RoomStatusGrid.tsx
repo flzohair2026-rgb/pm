@@ -536,8 +536,6 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
         if (!res.ok) {
             setUnitsState(prev => prev.map(u => u.id === selectedUnit.id ? { ...u, action_guest_name: undefined, guest_phone: undefined, has_temp_res: false } : u));
             alert(t('فشل حفظ الحجز المؤقت', 'Failed to save temporary reservation'));
-        } else {
-            router.refresh();
         }
         setShowReserveFormFor(null);
         setActiveUnitId(null);
@@ -1797,8 +1795,6 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                                     if (!res.ok) {
                                                         setUnitsState(prev => prev.map(u => u.id === unit.id ? { ...u, status: 'available' } : u));
                                                         alert(t('فشل تعديل الحالة إلى تنظيف', 'Failed to change status to cleaning'));
-                                                    } else {
-                                                        router.refresh();
                                                     }
                                                     setActiveUnitId(null);
                                                 }}
@@ -1815,8 +1811,6 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                                     if (!res.ok) {
                                                         setUnitsState(prev => prev.map(u => u.id === unit.id ? { ...u, status: 'available' } : u));
                                                         alert(t('فشل تعديل الحالة إلى صيانة', 'Failed to change status to maintenance'));
-                                                    } else {
-                                                        router.refresh();
                                                     }
                                                     setActiveUnitId(null);
                                                 }}
@@ -1866,8 +1860,6 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                                     if (!res.ok) {
                                                         setUnitsState(prevUnits => prevUnits.map(u => u.id === unit.id ? { ...u, status: prev.status as any, action_guest_name: prev.action_guest_name, guest_phone: prev.guest_phone, has_temp_res: prev.has_temp_res } : u));
                                                         alert(t('فشل إلغاء الحجز المؤقت', 'Failed to cancel temporary reservation'));
-                                                    } else {
-                                                        router.refresh();
                                                     }
                                                 }}
                                             >

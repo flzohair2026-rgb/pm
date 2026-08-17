@@ -5,9 +5,7 @@ import { Search, User, Menu, ChevronDown, Building2 } from 'lucide-react';
 import NotificationsMenu from './NotificationsMenu';
 import UserMenu from './UserMenu';
 import Logo from '@/components/Logo';
-import { useUserRole } from '@/hooks/useUserRole';
-import { useActiveHotel } from '@/hooks/useActiveHotel';
-import { supabase } from '@/lib/supabase';
+import { useAuthContext, HotelInfo } from '@/hooks/useAuthContext';
 import { useRouter } from 'next/navigation';
 
 interface HeaderProps {
@@ -15,14 +13,8 @@ interface HeaderProps {
 }
 
 export default function Header({ onMenuClick }: HeaderProps) {
-  const { role } = useUserRole();
-  const isHousekeeping = role === 'housekeeping';
-  const isAdmin = role === 'admin';
-  const { activeHotelId, setActiveHotelId } = useActiveHotel();
+  const { role, loading: authLoading, isHousekeeping, isAdmin, hotels, activeHotelId, setActiveHotelId } = useAuthContext();
   const router = useRouter();
-  const [hotels, setHotels] = useState<Array<{ id: string; name: string }>>([]);
-  const [hotelsLoading, setHotelsLoading] = useState(false);
-  const initRef = useRef(false);
   const [hotelMenuOpen, setHotelMenuOpen] = useState(false);
   const hotelMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -34,82 +26,11 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
   const activeHotelLabel = useMemo(() => {
     if (isAdmin && activeHotelValue === 'all') return 'كل الفنادق';
-    const h = hotels.find((x) => x.id === activeHotelValue);
+    const h = hotels.find((x: HotelInfo) => x.id === activeHotelValue);
     return h?.name || 'اختر فرع';
   }, [activeHotelValue, hotels, isAdmin]);
 
-  function readLocalActiveHotel() {
-    try {
-      const v = localStorage.getItem('active_hotel_id');
-      return v || null;
-    } catch {
-      return null;
-    }
-  }
-
-  useEffect(() => {
-    const load = async () => {
-      if (!role) return;
-      setHotelsLoading(true);
-      try {
-        if (isAdmin) {
-          const { data, error } = await supabase
-            .from('hotels')
-            .select('id, name')
-            .order('name', { ascending: true });
-          if (error) throw error;
-          setHotels((data || []) as any);
-          if (!initRef.current) {
-            initRef.current = true;
-            if (!readLocalActiveHotel()) setActiveHotelId('all');
-          }
-          return;
-        }
-
-        const { data: idsRaw, error: idsErr } = await supabase.rpc('get_my_hotels');
-        if (idsErr) throw idsErr;
-
-        const ids = Array.isArray(idsRaw)
-          ? (idsRaw as any[])
-              .map((x) => (typeof x === 'string' ? x : (x?.hotel_id ?? x?.id ?? null)))
-              .filter((x) => typeof x === 'string' && x.length > 0)
-          : [];
-
-        if (ids.length === 0) {
-          setHotels([]);
-          return;
-        }
-
-        const { data: hotelRows, error: hErr } = await supabase
-          .from('hotels')
-          .select('id, name')
-          .in('id', ids)
-          .order('name', { ascending: true });
-        if (hErr) throw hErr;
-        setHotels((hotelRows || []) as any);
-
-        if (!initRef.current) {
-          initRef.current = true;
-          const local = readLocalActiveHotel();
-          const localOk = local && local !== 'all' && ids.includes(local);
-          if (localOk) return;
-
-          const { data: defId, error: defErr } = await supabase.rpc('get_my_default_hotel');
-          if (!defErr && defId && typeof defId === 'string' && ids.includes(defId)) {
-            setActiveHotelId(defId);
-            return;
-          }
-
-          setActiveHotelId(ids[0]);
-        }
-      } catch {
-        setHotels([]);
-      } finally {
-        setHotelsLoading(false);
-      }
-    };
-    load();
-  }, [role, isAdmin, setActiveHotelId]);
+  const hotelsLoading = authLoading;
 
   useEffect(() => {
     if (!hotelMenuOpen) return;
@@ -132,9 +53,6 @@ export default function Header({ onMenuClick }: HeaderProps) {
     }
     if (!value) return;
     setActiveHotelId(value);
-    try {
-      await supabase.rpc('set_my_default_hotel', { p_hotel_id: value });
-    } catch {}
     router.refresh();
   };
 
@@ -173,7 +91,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
               >
                 {isAdmin && <option value="all">كل الفنادق</option>}
                 {!isAdmin && hotels.length === 0 ? <option value="">لا توجد صلاحية فروع</option> : null}
-                {hotels.map((h) => (
+                {hotels.map((h: HotelInfo) => (
                   <option key={h.id} value={h.id}>
                     {h.name}
                   </option>
@@ -212,7 +130,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
                   {!isAdmin && hotels.length === 0 ? (
                     <div className="px-3 py-2.5 text-[13px] font-extrabold text-gray-500">لا توجد صلاحية فروع</div>
                   ) : (
-                    hotels.map((h) => (
+                    hotels.map((h: HotelInfo) => (
                       <button
                         key={h.id}
                         type="button"

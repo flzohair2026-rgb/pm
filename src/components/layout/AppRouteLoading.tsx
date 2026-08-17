@@ -12,9 +12,9 @@ export function AppRouteLoading() {
   useEffect(() => {
     void run(async () => {
       await new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 80);
+        setTimeout(() => resolve(), 10);
       });
-    }, 'جاري الانتقال...', { minMs: 350 });
+    }, undefined, { minMs: 80 });
   }, [pathname, searchParams, run]);
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export function AppRouteLoading() {
               ? String(input.url)
               : '';
       const needsLoading = url && fetchRe.test(url);
-      const token = needsLoading ? show('جاري معالجة العملية...', { minMs: 250 }) : '';
+      const token = needsLoading ? show(undefined, { minMs: 80 }) : '';
       try {
         return await origFetch.apply(window, args as any);
       } finally {

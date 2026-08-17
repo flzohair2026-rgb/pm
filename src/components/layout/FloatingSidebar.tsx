@@ -85,7 +85,6 @@ export default function FloatingSidebar() {
   const t = (ar: string, en: string) => (language === 'en' ? en : ar);
   const onToggleLanguage = () => {
     toggleLanguage();
-    router.refresh();
   };
 
   return (
@@ -114,15 +113,13 @@ export default function FloatingSidebar() {
         const tabs: { href: string; label: string; icon: any; adminOnly?: boolean; hideFromManager?: boolean }[] = [];
 
         if (isHousekeeping) {
-          tabs.push({ href: '/maintenance', label: t('صيانة الوحدات', 'Maintenance'), icon: Wrench });
-          tabs.push({ href: '/cleaning', label: t('تنظيف الوحدات', 'Cleaning'), icon: Brush });
+          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
         } else if (isReceptionist) {
           tabs.push({ href: '/', label: t('لوحة التحكم', 'Dashboard'), icon: LayoutDashboard });
           tabs.push({ href: '/invoices', label: t('الفواتير', 'Invoices'), icon: FileText });
           tabs.push({ href: '/payments', label: t('المدفوعات', 'Payments'), icon: CreditCard });
           tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
-          tabs.push({ href: '/maintenance', label: t('صيانة الوحدات', 'Maintenance'), icon: Wrench });
-          tabs.push({ href: '/cleaning', label: t('تنظيف الوحدات', 'Cleaning'), icon: Brush });
+          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
           tabs.push({ href: '/notifications', label: t('التنبيهات', 'Notifications'), icon: Bell });
           tabs.push({ href: '/documents-archive', label: t('أرشيف الوثائق', 'Documents'), icon: FileText });
         } else if (isAccountant) {
@@ -130,8 +127,7 @@ export default function FloatingSidebar() {
           tabs.push({ href: '/bookings', label: t('حجز جديد', 'New Booking'), icon: CalendarDays });
           tabs.push({ href: '/bookings-list', label: t('سجل الحجوزات', 'Bookings Log'), icon: ListIcon });
           tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
-          tabs.push({ href: '/maintenance', label: t('صيانة الوحدات', 'Maintenance'), icon: Wrench });
-          tabs.push({ href: '/cleaning', label: t('تنظيف الوحدات', 'Cleaning'), icon: Brush });
+          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
           tabs.push({ href: '/invoices', label: t('الفواتير', 'Invoices'), icon: FileText });
           tabs.push({ href: '/payments', label: t('المدفوعات', 'Payments'), icon: CreditCard });
           tabs.push({ href: '/reports', label: t('التقارير', 'Reports'), icon: PieChart });
@@ -151,8 +147,7 @@ export default function FloatingSidebar() {
           tabs.push({ href: '/group-bookings', label: t('حجز متعدد', 'Group Booking'), icon: Layers });
           tabs.push({ href: '/bookings-list', label: t('سجل الحجوزات', 'Bookings Log'), icon: ListIcon });
           if (isAdmin || isManager) tabs.push({ href: '/units', label: t('الوحدات', 'Units'), icon: BedDouble });
-          tabs.push({ href: '/maintenance', label: t('صيانة الوحدات', 'Maintenance'), icon: Wrench });
-          tabs.push({ href: '/cleaning', label: t('تنظيف الوحدات', 'Cleaning'), icon: Brush });
+          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
           tabs.push({ href: '/notifications', label: t('التنبيهات', 'Notifications'), icon: Bell });
           tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
           tabs.push({ href: '/documents-archive', label: t('أرشيف الوثائق', 'Documents'), icon: FileText });

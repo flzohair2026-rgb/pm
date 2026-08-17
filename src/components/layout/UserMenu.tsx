@@ -2,98 +2,94 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { User, LogOut, Settings, ChevronDown } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useAuthContext } from '@/hooks/useAuthContext';
+import { supabase } from '@/lib/supabase';
 
 export default function UserMenu() {
   const [isOpen, setIsOpen] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<any>(null);
+  const { user, profile, role, signOut } = useAuthContext();
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const banCheckRef = useRef(false);
 
   useEffect(() => {
-    // Get initial user
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      
-      if (user) {
-        try {
-          const CACHE_KEY = 'ban_check_ts';
-          const CACHE_DURATION = 10 * 60 * 1000;
-          const lastCheck = sessionStorage.getItem(CACHE_KEY);
-          const now = Date.now();
+    if (!user || banCheckRef.current) return;
+    const run = async () => {
+      try {
+        const CACHE_KEY = 'ban_check_ts';
+        const CACHE_DURATION = 10 * 60 * 1000;
+        const lastCheck = sessionStorage.getItem(CACHE_KEY);
+        const now = Date.now();
 
-          if (!lastCheck || now - parseInt(lastCheck) > CACHE_DURATION) {
-            const banRes = await fetch('/api/auth/ban-status', { method: 'GET', cache: 'no-store', credentials: 'include' }).catch(() => null);
-            if (banRes?.ok) {
-              const banBody = await banRes.json().catch(() => ({} as any));
-              if (banBody?.banned) {
-                sessionStorage.removeItem(CACHE_KEY);
-                await supabase.auth.signOut();
-                router.replace('/login?banned=1');
-                router.refresh();
-                return;
-              }
-              // Update cache timestamp on successful non-banned check
-              sessionStorage.setItem(CACHE_KEY, now.toString());
+        if (!lastCheck || now - parseInt(lastCheck) > CACHE_DURATION) {
+          const banRes = await fetch('/api/auth/ban-status', { method: 'GET', cache: 'no-store', credentials: 'include' }).catch(() => null);
+          if (banRes?.ok) {
+            const banBody = await banRes.json().catch(() => ({} as any));
+            if (banBody?.banned) {
+              sessionStorage.removeItem(CACHE_KEY);
+              await signOut();
+              router.replace('/login?banned=1');
+              return;
             }
+            sessionStorage.setItem(CACHE_KEY, now.toString());
           }
-        } catch (e) {
-          console.error('Ban check error:', e);
         }
-
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        setProfile(data);
+      } catch {
+        // ignore
+      } finally {
+        banCheckRef.current = true;
       }
     };
-    
-    getUser();
+    void run();
+  }, [user, signOut, router]);
 
-    // Close menu when clicking outside
+  useEffect(() => {
+    if (!isOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [isOpen]);
 
   const handleLogout = async () => {
     try {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        await supabase.from('system_events').insert({
-          event_type: 'user_logout',
-          message: 'تسجيل خروج',
-          payload: {
-            actor_id: user?.id || null,
-            actor_email: user?.email || null
-          }
-        });
+        const { data: { user: u } } = await supabase.auth.getUser();
+        try {
+          await supabase.from('system_events').insert({
+            event_type: 'user_logout',
+            message: 'تسجيل خروج',
+            payload: {
+              actor_id: u?.id || null,
+              actor_email: u?.email || null
+            }
+          });
+        } catch {}
       } catch {}
       sessionStorage.removeItem('ban_check_ts');
-      localStorage.removeItem('auth_ban_check_ts');
-      localStorage.removeItem('user_role_cache');
-      localStorage.removeItem('user_role_cache_ts');
-      await supabase.auth.signOut();
+      await signOut();
       router.push('/login');
       router.refresh();
-    } catch (error) {
-      console.error('Error signing out:', error);
+    } catch {
+      // ignore
     }
   };
 
   const displayName = profile?.full_name || user?.email?.split('@')[0] || 'المشرف العام';
-  const displayRole = profile?.role === 'admin' ? 'مدير النظام' : (profile?.role === 'manager' ? 'مدير' : 'موظف استقبال');
+  const roleMap: Record<string, string> = {
+    admin: 'مدير النظام',
+    manager: 'مدير',
+    accountant: 'محاسب',
+    marketing: 'تسويق',
+    housekeeping: 'خدمة الغرف',
+    receptionist: 'موظف استقبال',
+  };
+  const displayRole = role ? (roleMap[role] || 'موظف') : 'موظف استقبال';
 
   return (
     <div className="relative" ref={menuRef}>
@@ -119,7 +115,7 @@ export default function UserMenu() {
           </div>
           
           <div className="p-1">
-            {profile?.role !== 'receptionist' && (
+            {role !== 'receptionist' && (
               <Link 
                 href="/settings" 
                 onClick={() => setIsOpen(false)}

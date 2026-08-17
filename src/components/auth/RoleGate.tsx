@@ -1,18 +1,18 @@
- 'use client';
- 
- import React from 'react';
- import { useUserRole, UserRole } from '@/hooks/useUserRole';
- import { ShieldAlert } from 'lucide-react';
+'use client';
+
+import React from 'react';
+import { useAuthContext, UserRole } from '@/hooks/useAuthContext';
+import { ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
- 
- interface RoleGateProps {
-   allow: Exclude<UserRole, null>[];
-   children: React.ReactNode;
-   fallback?: React.ReactNode;
- }
- 
- export default function RoleGate({ allow, children, fallback }: RoleGateProps) {
-  const { role, loading, error } = useUserRole();
+
+interface RoleGateProps {
+  allow: Exclude<UserRole, null>[];
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}
+
+export default function RoleGate({ allow, children, fallback }: RoleGateProps) {
+  const { role, loading, error, signOut } = useAuthContext();
   const allowKey = allow.join('|');
   const [hasAccess, setHasAccess] = React.useState(false);
 
@@ -20,19 +20,19 @@ import Link from 'next/link';
     if (!role) return;
     setHasAccess(allow.includes(role));
   }, [role, allowKey]);
- 
-   if (loading && hasAccess) {
-     return <>{children}</>;
-   }
 
-   if (loading) {
-     return (
-       <div className="p-10 flex items-center justify-center text-gray-500">
-         جارِ التحقق من الصلاحيات...
-       </div>
-     );
-   }
- 
+  if (loading && hasAccess) {
+    return <>{children}</>;
+  }
+
+  if (loading) {
+    return (
+      <div className="p-10 flex items-center justify-center text-gray-500">
+        جارِ التحقق من الصلاحيات...
+      </div>
+    );
+  }
+
   if (!role) {
      if (fallback) return <>{fallback}</>;
      return (
@@ -52,18 +52,18 @@ import Link from 'next/link';
             >
               إعادة المحاولة
             </button>
-            <Link
-              href="/login"
+            <button
+              onClick={async () => { await signOut(); window.location.href = '/login'; }}
               className="px-4 py-2 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors"
             >
               تسجيل الدخول
-            </Link>
+            </button>
           </div>
          </div>
        </div>
      );
    }
- 
+
   if (!allow.includes(role)) {
     if (fallback) return <>{fallback}</>;
     return (
@@ -82,4 +82,4 @@ import Link from 'next/link';
   }
 
    return <>{children}</>;
- }
+}

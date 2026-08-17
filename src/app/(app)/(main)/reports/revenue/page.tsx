@@ -60,8 +60,11 @@ export default function RevenueReportPage() {
     fetchData();
   }, [roleLoading, role, startDate, endDate, showAccountingDetails, selectedHotelId]);
 
-  const fetchData = async () => {
-    setLoading(true);
+  // ================================================================
+  // المسار القديم (Legacy) المُعاد تسميته — يبقى جاهزاً 100%
+  // يستدعى تلقائياً إذا فشل الـ RPC الجديد لأي سبب على الإطلاق.
+  // ================================================================
+  const fetchDataLegacy = async () => {
     try {
       if (role === 'manager') {
         setRevenueData([]);
@@ -129,7 +132,6 @@ export default function RevenueReportPage() {
       if (accountIds.length === 0) {
         setRevenueData([]);
         setTotalRevenue(0);
-        setLoading(false);
         return;
       }
 
@@ -156,10 +158,6 @@ export default function RevenueReportPage() {
         .eq('journal_entries.status', 'posted')
         .gte('journal_entries.entry_date', startDate)
         .lte('journal_entries.entry_date', endDate);
-
-      // If not showing details, we might want to only show inflows (Debits)
-      // but based on user request "show debit and credit", we fetch all.
-      // We will handle the filtering in the UI/processing.
 
       const { data: lines, error: linesError } = await query;
       if (linesError) throw linesError;
@@ -239,14 +237,12 @@ export default function RevenueReportPage() {
       }
 
       // Process Data - Fund Accounts (Assets)
-      // Debit = Inflow (+)
-      // Credit = Outflow (-)
       let total = 0;
       const filteredLines = lines?.filter(line => {
         if (!showAccountingDetails) {
-          return Number(line.debit) > 0; // Only Inflows in simple view
+          return Number(line.debit) > 0;
         }
-        return true; // All movements in detailed view
+        return true;
       }) || [];
 
       const processedLines = filteredLines.map((line: any) => {
@@ -313,6 +309,64 @@ export default function RevenueReportPage() {
       setRevenueData(scopedLines);
       setTotalRevenue(scopedTotal);
 
+    } catch (error) {
+      console.error('[REVENUE-LEGACY] Error:', error);
+      throw error;
+    }
+  };
+
+  // ================================================================
+  // المسار الجديد (RPC V1) مع FALLBACK آمن
+  //   - نحاول RPC أولاً (1-2 ثانية عادةً)
+  //   - أي خطأ → نرجع تلقائياً لـ Legacy (بدون أي تحذير للمستخدم)
+  // ================================================================
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      if (role === 'manager') {
+        setRevenueData([]);
+        setTotalRevenue(0);
+        setHotelTotals([]);
+        setAccounts([]);
+        return;
+      }
+
+      let usedRpc = false;
+      try {
+        const { data, error } = await supabase.rpc('get_revenue_report_v1', {
+          p_start_date: startDate,
+          p_end_date: endDate,
+          p_hotel_id: selectedHotelId || 'all',
+          p_details_mode: !!showAccountingDetails,
+        });
+        if (!error && data && (data as any)?.success === true) {
+          const payload = data as any;
+          usedRpc = true;
+          if (typeof window !== 'undefined') {
+            try {
+              // ضع علامة على نجاح الـ RPC في dev-tools فقط (لا يظهر للمستخدم)
+              (window as any).__REVENUE_RPC_LAST = { ok: true, version: payload.version, count: payload.lines_count, at: Date.now() };
+            } catch {}
+          }
+          const lines = Array.isArray(payload.lines) ? payload.lines : [];
+          const totals = Array.isArray(payload.hotel_totals) ? payload.hotel_totals : [];
+          setRevenueData(lines);
+          setTotalRevenue(Number(payload.total_revenue || 0));
+          setHotelTotals(totals as any);
+          setAccounts([]);
+          return;
+        }
+        // أي خطأ → ننتقل للـ Legacy بدون إظهار أي رسالة
+        if (error) {
+          console.warn('[REVENUE-RPC] فشل أو غير منفذ، الانتقال للمسار القديم (Legacy):', error?.message || error);
+        }
+      } catch (rpcErr: any) {
+        console.warn('[REVENUE-RPC] استثناء أثناء الـ RPC، الانتقال للمسار القديم:', rpcErr?.message || rpcErr);
+      }
+
+      if (!usedRpc) {
+        await fetchDataLegacy();
+      }
     } catch (error) {
       console.error('Error fetching revenue report:', error);
     } finally {

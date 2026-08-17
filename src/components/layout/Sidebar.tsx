@@ -28,7 +28,7 @@ import {
     Shield as ActivityShieldIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useAuthContext } from '@/hooks/useAuthContext';
 import { useAppLanguage } from '@/hooks/useAppLanguage';
 import Logo from '@/components/Logo';
 
@@ -38,10 +38,10 @@ interface SidebarItemProps {
   href: string;
   onClick?: () => void;
   disabled?: boolean;
+  pathname: string;
 }
 
-const SidebarItem = ({ icon: Icon, label, href, onClick, disabled }: SidebarItemProps) => {
-  const pathname = usePathname();
+const SidebarItem = ({ icon: Icon, label, href, onClick, disabled, pathname }: SidebarItemProps) => {
   const isActive = pathname === href;
 
   return (
@@ -71,7 +71,8 @@ const SidebarItem = ({ icon: Icon, label, href, onClick, disabled }: SidebarItem
 };
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const { role, loading } = useUserRole();
+  const pathname = usePathname();
+  const { role, loading, signOut } = useAuthContext();
   const { language, toggleLanguage } = useAppLanguage();
   const router = useRouter();
   const isAdmin = role === 'admin';
@@ -84,15 +85,8 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const t = (ar: string, en: string) => (language === 'en' ? en : ar);
   const onToggleLanguage = () => {
     toggleLanguage();
-    router.refresh();
   };
 
-  // Helper to show/hide items based on role
-  // If role is loading, we default to showing nothing or safe items to prevent flickering of forbidden items?
-  // Or we show skeleton? For now, let's just render. 
-  // If loading, role is null. isReceptionist is false. So we might show items briefly?
-  // Better to check if loading.
-  
   if (loading) {
     return (
       <div className="p-6 animate-pulse">
@@ -120,48 +114,44 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('العمليات', 'Operations')}</p>
             {isHousekeeping ? (
               <>
-                <SidebarItem icon={Wrench} label={t('صيانة الوحدات', 'Maintenance')} href="/maintenance" onClick={onNavigate} />
-                <SidebarItem icon={Brush} label={t('تنظيف الوحدات', 'Cleaning')} href="/cleaning" onClick={onNavigate} />
+                <SidebarItem icon={Brush} label={t('النظافة والصيانة', 'Cleaning & Maintenance')} href="/cleaning" onClick={onNavigate} pathname={pathname} />
               </>
             ) : (
               <>
                 {isReceptionist ? (
                   <>
-                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} />
-                    <SidebarItem icon={FileText} label={t('الفواتير', 'Invoices')} href="/invoices" onClick={onNavigate} />
-                    <SidebarItem icon={CreditCard} label={t('المدفوعات', 'Payments')} href="/payments" onClick={onNavigate} />
-                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} />
-                    <SidebarItem icon={Wrench} label={t('صيانة الوحدات', 'Maintenance')} href="/maintenance" onClick={onNavigate} />
-                    <SidebarItem icon={Brush} label={t('تنظيف الوحدات', 'Cleaning')} href="/cleaning" onClick={onNavigate} />
-                    <SidebarItem icon={Bell} label={t('التنبيهات', 'Notifications')} href="/notifications" onClick={onNavigate} />
-                    <SidebarItem icon={FileText} label={t('أرشيف الوثائق', 'Documents')} href="/documents-archive" onClick={onNavigate} />
+                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={FileText} label={t('الفواتير', 'Invoices')} href="/invoices" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={CreditCard} label={t('المدفوعات', 'Payments')} href="/payments" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Brush} label={t('النظافة والصيانة', 'Cleaning & Maintenance')} href="/cleaning" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Bell} label={t('التنبيهات', 'Notifications')} href="/notifications" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={FileText} label={t('أرشيف الوثائق', 'Documents')} href="/documents-archive" onClick={onNavigate} pathname={pathname} />
                   </>
                 ) : isAccountant ? (
                   <>
-                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} />
-                    <SidebarItem icon={CalendarDays} label={t('حجز جديد', 'New Booking')} href="/bookings" onClick={onNavigate} />
-                    <SidebarItem icon={List} label={t('سجل الحجوزات', 'Bookings Log')} href="/bookings-list" onClick={onNavigate} />
-                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} />
-                    <SidebarItem icon={Wrench} label={t('صيانة الوحدات', 'Maintenance')} href="/maintenance" onClick={onNavigate} />
-                    <SidebarItem icon={Brush} label={t('تنظيف الوحدات', 'Cleaning')} href="/cleaning" onClick={onNavigate} />
+                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={CalendarDays} label={t('حجز جديد', 'New Booking')} href="/bookings" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={List} label={t('سجل الحجوزات', 'Bookings Log')} href="/bookings-list" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Brush} label={t('النظافة والصيانة', 'Cleaning & Maintenance')} href="/cleaning" onClick={onNavigate} pathname={pathname} />
                   </>
                 ) : isMarketing ? (
                   <>
-                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} />
-                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} />
+                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} pathname={pathname} />
                   </>
                 ) : (
                   <>
-                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} />
-                    <SidebarItem icon={CalendarDays} label={t('حجز جديد', 'New Booking')} href="/bookings" onClick={onNavigate} />
-                    <SidebarItem icon={Layers} label={t('حجز متعدد', 'Group Booking')} href="/group-bookings" onClick={onNavigate} disabled />
-                    <SidebarItem icon={List} label={t('سجل الحجوزات', 'Bookings Log')} href="/bookings-list" onClick={onNavigate} />
-                    {(isAdmin || isManager) && <SidebarItem icon={BedDouble} label={t('الوحدات', 'Units')} href="/units" onClick={onNavigate} />}
-                    <SidebarItem icon={Wrench} label={t('صيانة الوحدات', 'Maintenance')} href="/maintenance" onClick={onNavigate} />
-                    <SidebarItem icon={Brush} label={t('تنظيف الوحدات', 'Cleaning')} href="/cleaning" onClick={onNavigate} />
-                    <SidebarItem icon={Bell} label={t('التنبيهات', 'Notifications')} href="/notifications" onClick={onNavigate} />
-                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} />
-                    <SidebarItem icon={FileText} label={t('أرشيف الوثائق', 'Documents')} href="/documents-archive" onClick={onNavigate} />
+                    <SidebarItem icon={LayoutDashboard} label={t('لوحة التحكم', 'Dashboard')} href="/" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={CalendarDays} label={t('حجز جديد', 'New Booking')} href="/bookings" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Layers} label={t('حجز متعدد', 'Group Booking')} href="/group-bookings" onClick={onNavigate} disabled pathname={pathname} />
+                    <SidebarItem icon={List} label={t('سجل الحجوزات', 'Bookings Log')} href="/bookings-list" onClick={onNavigate} pathname={pathname} />
+                    {(isAdmin || isManager) && <SidebarItem icon={BedDouble} label={t('الوحدات', 'Units')} href="/units" onClick={onNavigate} pathname={pathname} />}
+                    <SidebarItem icon={Brush} label={t('النظافة والصيانة', 'Cleaning & Maintenance')} href="/cleaning" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Bell} label={t('التنبيهات', 'Notifications')} href="/notifications" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={Users} label={t('العملاء والضيوف', 'Customers')} href="/customers" onClick={onNavigate} pathname={pathname} />
+                    <SidebarItem icon={FileText} label={t('أرشيف الوثائق', 'Documents')} href="/documents-archive" onClick={onNavigate} pathname={pathname} />
                   </>
                 )}
               </>
@@ -173,22 +163,22 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('المالية والتقارير', 'Finance & Reports')}</p>
               {!isMarketing && (
                 <>
-                  <SidebarItem icon={FileText} label={t('الفواتير', 'Invoices')} href="/invoices" onClick={onNavigate} />
-                  <SidebarItem icon={CreditCard} label={t('المدفوعات', 'Payments')} href="/payments" onClick={onNavigate} />
+                  <SidebarItem icon={FileText} label={t('الفواتير', 'Invoices')} href="/invoices" onClick={onNavigate} pathname={pathname} />
+                  <SidebarItem icon={CreditCard} label={t('المدفوعات', 'Payments')} href="/payments" onClick={onNavigate} pathname={pathname} />
                 </>
               )}
-              <SidebarItem icon={PieChart} label={t('التقارير', 'Reports')} href="/reports" onClick={onNavigate} />
+              <SidebarItem icon={PieChart} label={t('التقارير', 'Reports')} href="/reports" onClick={onNavigate} pathname={pathname} />
           </div>
         )}
 
         {!isReceptionist && !isHousekeeping && (!isManager || isAccountant) && !isMarketing && (
           <div className="mb-4">
               <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('المحاسبة', 'Accounting')}</p>
-              <SidebarItem icon={BookOpen} label={t('دليل الحسابات', 'Chart of Accounts')} href="/accounting/chart-of-accounts" onClick={onNavigate} />
-              <SidebarItem icon={ScrollText} label={t('كشف حساب', 'Statement')} href="/accounting/statement" onClick={onNavigate} />
-              <SidebarItem icon={CalendarDays} label={t('الفترات المحاسبية', 'Periods')} href="/accounting/periods" onClick={onNavigate} />
-              <SidebarItem icon={Building2} label={t('تسوية المنصات', 'Platforms')} href="/accounting/platforms" onClick={onNavigate} />
-              <SidebarItem icon={ArrowLeftRight} label={t('قيود يدوية', 'Manual Entries')} href="/accounting/manual-entry" onClick={onNavigate} />
+              <SidebarItem icon={BookOpen} label={t('دليل الحسابات', 'Chart of Accounts')} href="/accounting/chart-of-accounts" onClick={onNavigate} pathname={pathname} />
+              <SidebarItem icon={ScrollText} label={t('كشف حساب', 'Statement')} href="/accounting/statement" onClick={onNavigate} pathname={pathname} />
+              <SidebarItem icon={CalendarDays} label={t('الفترات المحاسبية', 'Periods')} href="/accounting/periods" onClick={onNavigate} pathname={pathname} />
+              <SidebarItem icon={Building2} label={t('تسوية المنصات', 'Platforms')} href="/accounting/platforms" onClick={onNavigate} pathname={pathname} />
+              <SidebarItem icon={ArrowLeftRight} label={t('قيود يدوية', 'Manual Entries')} href="/accounting/manual-entry" onClick={onNavigate} pathname={pathname} />
           </div>
         )}
 
@@ -196,14 +186,14 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('النظام', 'System')}</p>
             {isAdmin && (
               <>
-                <SidebarItem icon={UserCog} label={t('المستخدمين والصلاحيات', 'Users & Roles')} href="/admin/users" onClick={onNavigate} />
-                <SidebarItem icon={HistoryIcon} label={t('سجل مراقبة النظام', 'Audit Log')} href="/admin/audit-log" onClick={onNavigate} />
-                <SidebarItem icon={ActivityShieldIcon} label={t('سجل نشاط النظام', 'Activity Log')} href="/admin/audit" onClick={onNavigate} />
+                <SidebarItem icon={UserCog} label={t('المستخدمين والصلاحيات', 'Users & Roles')} href="/admin/users" onClick={onNavigate} pathname={pathname} />
+                <SidebarItem icon={HistoryIcon} label={t('سجل مراقبة النظام', 'Audit Log')} href="/admin/audit-log" onClick={onNavigate} pathname={pathname} />
+                <SidebarItem icon={ActivityShieldIcon} label={t('سجل نشاط النظام', 'Activity Log')} href="/admin/audit" onClick={onNavigate} pathname={pathname} />
               </>
             )}
             
-            {!isReceptionist && !isHousekeeping && !isManager && !isAccountant && !isMarketing && (
-              <SidebarItem icon={Settings} label={t('الإعدادات', 'Settings')} href="/settings" onClick={onNavigate} />
+            {(isAdmin || isManager) && (
+              <SidebarItem icon={Settings} label={t('الإعدادات', 'Settings')} href="/settings" onClick={onNavigate} pathname={pathname} />
             )}
         </div>
       </nav>
@@ -216,7 +206,10 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <Languages size={20} />
           <span className="hidden xl:inline">{language === 'en' ? 'العربية' : 'English'}</span>
         </button>
-        <button className="flex items-center gap-3 px-3 py-2 w-full text-right text-red-600 hover:bg-red-50 rounded-md transition-colors lg:justify-center xl:justify-start">
+        <button
+          onClick={async () => { try { await signOut(); router.refresh(); } catch {} }}
+          className="flex items-center gap-3 px-3 py-2 w-full text-right text-red-600 hover:bg-red-50 rounded-md transition-colors lg:justify-center xl:justify-start"
+        >
           <LogOut size={20} />
           <span className="hidden xl:inline">{t('تسجيل الخروج', 'Sign out')}</span>
         </button>

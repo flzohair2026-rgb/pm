@@ -176,92 +176,185 @@ export default async function Home() {
   const applyHotel = <Q extends { eq: (k: string, v: any) => Q }>(q: Q, hid: string) => hid !== 'all' ? q.eq('hotel_id', hid) : q;
 
   // ==========================================
-  // BATCH 2: تشغيل كل الاستعلامات معًا بالتوازي (Parallel Query Batching)
+  // 🚀 [الأسرع] المحاولة الأولى: الـ RPC الكبير الجديد get_dashboard_full_snapshot
+  //    يحمل كل البيانات (18 استعلام) في مكالمة واحدة داخل قاعدة البيانات.
+  // 🛟 [الأمان] لو فشل لأي سبب (عدم نشر الدالة، خطأ SQL، إلخ) → Fallback تلقائي
+  //    لكود الـ 18 استعلام القديم بالكامل.
   // ==========================================
-  const [
-    unitsRes,
-    activeBookingsRes,
-    arrivalsRes,
-    departuresRes,
-    overdueRes,
-    bookingsRes,
-    activeCheckedInRes,
-    pendingArrivalsRes,
-    delayedRes,
-    checkoutRes,
-    notificationsRes,
-    hotelRevenueRes,
-    latePaymentsRes,
-    expiringRes
-  ] = await Promise.all([
-    applyHotel(unitsBase, selectedHotelId),
-    applyHotel(activeBookingsBase, selectedHotelId),
-    applyHotel(arrivalsBase, selectedHotelId),
-    applyHotel(departuresBase, selectedHotelId),
-    applyHotel(overdueBase, selectedHotelId),
-    applyHotel(recentBase, selectedHotelId),
-    applyHotel(activeCheckedInBase, selectedHotelId),
-    applyHotel(pendingArrivalsBase, selectedHotelId),
-    applyHotel(delayedBase, selectedHotelId),
-    applyHotel(checkoutBase, selectedHotelId),
-    // الإشعارات: فقط لو كان الفندق محددًا نفلتر (وإلا كل الفنادق)
-    (async () => {
-      try {
-        if (selectedHotelId !== 'all') return await notifBase.eq('hotel_id', selectedHotelId);
-        return await notifBase;
-      } catch { return { data: [], error: null } as any; }
-    })(),
-    // الإيرادات والرسوم البيانية — تفرّع حسب الفندق
-    (async () => {
-      try {
-        if (selectedHotelId !== 'all') {
-          const monthP = supabase
-            .from('payments')
-            .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
-            .eq('status', 'posted')
-            .gte('payment_date', startOfMonthStr)
-            .eq('invoice.booking.hotel_id', selectedHotelId);
-          const weekP = supabase
-            .from('payments')
-            .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
-            .eq('status', 'posted')
-            .gte('payment_date', last7Start)
-            .lte('payment_date', todayStr)
-            .eq('invoice.booking.hotel_id', selectedHotelId);
-          const [m, w] = await Promise.all([monthP, weekP]);
-          return { mode: 'per-hotel', monthData: m.data, weekData: w.data } as const;
-        }
-        const rpcRes = await supabase.rpc('get_cash_flow_stats');
-        if (!rpcRes.error && rpcRes.data) {
-          return { mode: 'rpc', data: rpcRes.data } as const;
-        }
-        const rev = await supabase
-          .from('revenue_schedules')
-          .select('amount, recognition_date')
-          .gte('recognition_date', startOfMonthStr);
-        return { mode: 'fallback', data: rev.data } as const;
-      } catch (e: any) {
-        return { mode: 'err' as const, msg: String(e?.message || e) };
-      }
-    })(),
-    // ملخص الترحيب — بنفس الدفعة المتوازية لا تُضيف وقتًا
-    applyHotel(latePaymentsBase, selectedHotelId),
-    applyHotel(expiringBase, selectedHotelId)
-  ]);
+  let rpcMode: 'rpc' | 'fallback' = 'fallback';
+  let unitsData: any = null;
+  let activeBookings: any = null;
+  let arrivalsToday: any = null;
+  let departuresToday: any = null;
+  let overdueCheckouts: any = null;
+  let bookingsData: any = null;
+  let activeCheckedInFinal: any = null;
+  let pendingArrivalsCount: number | null = null;
+  let delayedBookings: any = null;
+  let checkoutBookings: any = null;
+  let notifications: any = null;
+  let hotelRevenueRes: any = { mode: 'err' as const, msg: '' };
+  let latePaymentsRaw: any = null;
+  let expiringRaw: any = null;
+  let typesData: any = [];
+  let tempRes: any = [];
 
-  const { data: unitsData } = unitsRes as any;
-  const { data: activeBookings } = activeBookingsRes as any;
-  const { data: arrivalsToday } = arrivalsRes as any;
-  const { data: departuresToday } = departuresRes as any;
-  const { data: overdueCheckouts } = overdueRes as any;
-  const { data: bookingsData } = bookingsRes as any;
-  const { data: activeCheckedInFinal } = activeCheckedInRes as any;
-  const { count: pendingArrivalsCount } = pendingArrivalsRes as any;
-  const { data: delayedBookings } = delayedRes as any;
-  const { data: checkoutBookings } = checkoutRes as any;
-  const { data: notifications } = notificationsRes as any;
-  const { data: latePaymentsRaw } = latePaymentsRes as any;
-  const { data: expiringRaw } = expiringRes as any;
+  try {
+    const rpcSnap = await supabase.rpc('get_dashboard_full_snapshot', {
+      p_hotel_id:        selectedHotelId,
+      p_today_str:       todayStr,
+      p_next_day_str:    nextDayStr,
+      p_last_7_start:    last7Start,
+      p_start_of_month:  startOfMonthStr,
+      p_expiring_start:  expiringStart,
+      p_expiring_end:    expiringEnd
+    });
+    if (rpcSnap.error) throw new Error(String(rpcSnap.error.message || rpcSnap.error || 'rpc_error'));
+    const snap: any = rpcSnap.data || null;
+    if (snap && snap.success === true) {
+      rpcMode = 'rpc';
+      unitsData             = Array.isArray(snap.units)              ? snap.units              : [];
+      activeBookings        = Array.isArray(snap.active_bookings)    ? snap.active_bookings    : [];
+      arrivalsToday         = Array.isArray(snap.arrivals_today)      ? snap.arrivals_today     : [];
+      departuresToday       = Array.isArray(snap.departures_today)  ? snap.departures_today   : [];
+      overdueCheckouts      = Array.isArray(snap.overdue_checkouts) ? snap.overdue_checkouts  : [];
+      bookingsData         = Array.isArray(snap.recent_bookings)    ? snap.recent_bookings    : [];
+      activeCheckedInFinal = Array.isArray(snap.active_checked_in)  ? snap.active_checked_in  : [];
+      pendingArrivalsCount  = typeof snap.pending_arrivals_count === 'number' ? snap.pending_arrivals_count : null;
+      delayedBookings     = Array.isArray(snap.delayed_bookings)   ? snap.delayed_bookings    : [];
+      checkoutBookings    = Array.isArray(snap.checkout_bookings)  ? snap.checkout_bookings   : [];
+      notifications       = Array.isArray(snap.notifications)     ? snap.notifications       : [];
+      hotelRevenueRes     = snap.hotel_revenue || { mode: 'err' as const, msg: '' };
+      latePaymentsRaw     = Array.isArray(snap.late_payments)      ? snap.late_payments       : [];
+      expiringRaw         = Array.isArray(snap.expiring_bookings)  ? snap.expiring_bookings   : [];
+      typesData           = Array.isArray(snap.unit_types)         ? snap.unit_types          : [];
+      tempRes             = Array.isArray(snap.temp_reservations)  ? snap.temp_reservations   : [];
+    } else {
+      throw new Error('rpc_malformed_response');
+    }
+  } catch {
+    rpcMode = 'fallback';
+  }
+
+  // ==========================================
+  // 🛟 FALLBACK آمن للكود القديم (الـ 18 استعلام)
+  //    يتم تشغيله فقط إذا: لم يتم نشر الـ RPC بعد / أو RPC تعطل لأي سبب.
+  //    (شروطك مطبقة: لا خلل في المنتج نهائياً + لا ننسى أي حقل)
+  // ==========================================
+  if (rpcMode === 'fallback') {
+    const [
+      unitsRes,
+      activeBookingsRes,
+      arrivalsRes,
+      departuresRes,
+      overdueRes,
+      bookingsRes,
+      activeCheckedInRes,
+      pendingArrivalsRes,
+      delayedRes,
+      checkoutRes,
+      notificationsRes,
+      hotelRevRes,
+      latePaymentsRes,
+      expiringRes
+    ] = await Promise.all([
+      applyHotel(unitsBase, selectedHotelId),
+      applyHotel(activeBookingsBase, selectedHotelId),
+      applyHotel(arrivalsBase, selectedHotelId),
+      applyHotel(departuresBase, selectedHotelId),
+      applyHotel(overdueBase, selectedHotelId),
+      applyHotel(recentBase, selectedHotelId),
+      applyHotel(activeCheckedInBase, selectedHotelId),
+      applyHotel(pendingArrivalsBase, selectedHotelId),
+      applyHotel(delayedBase, selectedHotelId),
+      applyHotel(checkoutBase, selectedHotelId),
+      // الإشعارات: فقط لو كان الفندق محددًا نفلتر (وإلا كل الفنادق)
+      (async () => {
+        try {
+          if (selectedHotelId !== 'all') return await notifBase.eq('hotel_id', selectedHotelId);
+          return await notifBase;
+        } catch { return { data: [], error: null } as any; }
+      })(),
+      // الإيرادات والرسوم البيانية — تفرّع حسب الفندق
+      (async () => {
+        try {
+          if (selectedHotelId !== 'all') {
+            const monthP = supabase
+              .from('payments')
+              .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
+              .eq('status', 'posted')
+              .gte('payment_date', startOfMonthStr)
+              .eq('invoice.booking.hotel_id', selectedHotelId);
+            const weekP = supabase
+              .from('payments')
+              .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
+              .eq('status', 'posted')
+              .gte('payment_date', last7Start)
+              .lte('payment_date', todayStr)
+              .eq('invoice.booking.hotel_id', selectedHotelId);
+            const [m, w] = await Promise.all([monthP, weekP]);
+            return { mode: 'per-hotel', monthData: m.data, weekData: w.data } as const;
+          }
+          const rpcRes = await supabase.rpc('get_cash_flow_stats');
+          if (!rpcRes.error && rpcRes.data) {
+            return { mode: 'rpc', data: rpcRes.data } as const;
+          }
+          const rev = await supabase
+            .from('revenue_schedules')
+            .select('amount, recognition_date')
+            .gte('recognition_date', startOfMonthStr);
+          return { mode: 'fallback', data: rev.data } as const;
+        } catch (e: any) {
+          return { mode: 'err' as const, msg: String(e?.message || e) };
+        }
+      })(),
+      // ملخص الترحيب — بنفس الدفعة المتوازية لا تُضيف وقتًا
+      applyHotel(latePaymentsBase, selectedHotelId),
+      applyHotel(expiringBase, selectedHotelId)
+    ]);
+
+    unitsData             = (unitsRes as any).data;
+    activeBookings        = (activeBookingsRes as any).data;
+    arrivalsToday         = (arrivalsRes as any).data;
+    departuresToday       = (departuresRes as any).data;
+    overdueCheckouts      = (overdueRes as any).data;
+    bookingsData         = (bookingsRes as any).data;
+    activeCheckedInFinal = (activeCheckedInRes as any).data;
+    pendingArrivalsCount  = (pendingArrivalsRes as any).count;
+    delayedBookings     = (delayedRes as any).data;
+    checkoutBookings    = (checkoutRes as any).data;
+    notifications       = (notificationsRes as any).data;
+    hotelRevenueRes     = hotelRevRes;
+    latePaymentsRaw     = (latePaymentsRes as any).data;
+    expiringRaw         = (expiringRes as any).data;
+
+    // ==========================================
+    // BATCH 3 (Fallback فقط): الاستعلامات التابعة لـ unitsData
+    // ==========================================
+    const typeIdsFb = Array.from(new Set((unitsData || []).map((u: any) => u.unit_type_id).filter(Boolean)));
+    const unitIdsFb = (unitsData || []).map((u: any) => u.id);
+    const [_typesData, _tempRes] = await Promise.all([
+      (async () => {
+        if (typeIdsFb.length === 0) return [];
+        const { data } = await supabase
+          .from('unit_types')
+          .select('id, name, annual_price, daily_price, price_per_year')
+          .in('id', typeIdsFb);
+        return data || [];
+      })(),
+      (async () => {
+        if (unitIdsFb.length === 0) return [];
+        const { data } = await supabase
+          .from('temporary_reservations')
+          .select('unit_id, customer_name, reserve_date, phone')
+          .in('unit_id', unitIdsFb)
+          .eq('reserve_date', todayStr);
+        return data || [];
+      })()
+    ]);
+    typesData = _typesData;
+    tempRes   = _tempRes;
+  }
 
   let wsSeq = 0;
   const nid = (prefix = '') => `${prefix || 'w'}${Date.now().toString(36)}${(++wsSeq).toString(36)}`;
@@ -345,30 +438,6 @@ export default async function Home() {
     today_arrivals: today_chips(arrivalsToday, 'tin')
   };
 
-  // ==========================================
-  // BATCH 3: الاستعلامات التابعة لـ unitsData لكنها الآن تعمل بعدها فورًا
-  // ==========================================
-  const typeIds = Array.from(new Set((unitsData || []).map((u: any) => u.unit_type_id).filter(Boolean)));
-  const unitIds = (unitsData || []).map((u: any) => u.id);
-  const [typesData, tempRes] = await Promise.all([
-    (async () => {
-      if (typeIds.length === 0) return [];
-      const { data } = await supabase
-        .from('unit_types')
-        .select('id, name, annual_price, daily_price, price_per_year')
-        .in('id', typeIds);
-      return data || [];
-    })(),
-    (async () => {
-      if (unitIds.length === 0) return [];
-      const { data } = await supabase
-        .from('temporary_reservations')
-        .select('unit_id, customer_name, reserve_date, phone')
-        .in('unit_id', unitIds)
-        .eq('reserve_date', todayStr);
-      return data || [];
-    })()
-  ]);
   const typeMap = new Map<string, any>();
   (typesData || []).forEach((t: any) => typeMap.set(t.id, t));
 
@@ -436,7 +505,7 @@ export default async function Home() {
     }
   }
   if (reminderInserts.length > 0) {
-    try { await supabase.from('system_events').insert(reminderInserts); } catch {}
+    (async () => { try { await supabase.from('system_events').insert(reminderInserts); } catch {} })();
   }
 
   // ==========================================

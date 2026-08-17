@@ -13,7 +13,17 @@ interface Profile {
   email: string;
   role: 'admin' | 'manager' | 'receptionist' | 'housekeeping' | 'accountant' | 'marketing';
   created_at: string;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  is_super_admin?: boolean;
 }
+
+// 🔒 المعرف الثابت للسوبر أدمن المحمي (من متغير البيئة NEXT_PUBLIC_SUPER_ADMIN_ID
+//    مع fallback مطابق لملف super_admin_protection.sql في حال عدم تعيين المتغير)
+const SUPER_ADMIN_ID: string =
+  (process.env.NEXT_PUBLIC_SUPER_ADMIN_ID as string | undefined) ??
+  '';
 
 export default function UserManagementPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -57,10 +67,11 @@ export default function UserManagementPage() {
       
       setCurrentUserRole(myProfile?.role || null);
 
-      // 2. Fetch All Profiles
+      // 2. Fetch All Profiles (فلترة is_deleted = false بشكل افتراضي)
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
+        .eq('is_deleted', false)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -261,7 +272,14 @@ export default function UserManagementPage() {
 
   const handleDeleteUser = async (userId: string, email: string) => {
     if (!userId) return;
-    if (!window.confirm(`تأكيد حذف المستخدم:\n${email}\nسيتم حذف الحساب نهائيًا إذا كانت إعدادات الخادم مهيأة. إن لم تكن، سنعرض خيار التعطيل داخل النظام.`)) {
+    if (!window.confirm(
+      `تأكيد حذف المستخدم:\n${email}\n\n` +
+      `سيتم تنفيذ ما يلي:\n` +
+      `• حظر المستخدم من تسجيل الدخول مدى الحياة\n` +
+      `• إزالته من قوائم الموظفين\n` +
+      `• الحفاظ على كافة سجلاته (تنظيفات / صيانات / ملاحظات) دون أي تعديل\n\n` +
+      `هذه العملية يمكن التراجع عنها لاحقاً عبر قاعدة البيانات.`
+    )) {
       return;
     }
     setDeletingId(userId);
@@ -269,30 +287,15 @@ export default function UserManagementPage() {
       const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({} as any));
-        // Graceful fallback if service role missing
-        if (body?.error === 'missing_service_role') {
-          const agreeSoft = window.confirm(
-            'ملاحظة: لم يتم تهيئة مفتاح الخدمة على الخادم، ولا يمكن الحذف النهائي الآن.\n' +
-            'هل تريد تعطيل المستخدم داخل النظام (حذف ملف التعريف فقط)؟'
-          );
-          if (agreeSoft) {
-            const resSoft = await fetch(`/api/admin/users/${encodeURIComponent(userId)}?mode=soft`, { method: 'DELETE' });
-            if (!resSoft.ok) {
-              const b2 = await resSoft.json().catch(() => ({}));
-              throw new Error(b2?.error || `فشل التعطيل (HTTP ${resSoft.status})`);
-            }
-            setProfiles(prev => prev.filter(p => p.id !== userId));
-            alert('تم تعطيل المستخدم داخل النظام (يمكن تفعيل الحذف النهائي بعد تهيئة الخادم).');
-            return;
-          } else {
-            throw new Error('تم إلغاء العملية');
-          }
-        }
         throw new Error(body?.error || `فشل الحذف (HTTP ${res.status})`);
       }
       const done = await res.json().catch(() => ({} as any));
       setProfiles(prev => prev.filter(p => p.id !== userId));
-      alert(done?.mode === 'soft' ? 'تم تعطيل المستخدم داخل النظام' : 'تم حذف المستخدم نهائيًا');
+      if (done?.auth_banned) {
+        alert('تم حذف المستخدم بنجاح:\n• محظور من تسجيل الدخول مدى الحياة\n• جميع سجلاته محفوظة');
+      } else {
+        alert('تم حذف المستخدم من قوائم الموظفين.\nملاحظة: لم يتم تطبيق حظر Auth (Service Role غير مهيأ).');
+      }
     } catch (e: any) {
       alert(e?.message || 'تعذر حذف المستخدم');
     } finally {
@@ -370,11 +373,23 @@ export default function UserManagementPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {profiles.map((profile) => (
-              <tr key={profile.id} className="hover:bg-gray-50 transition-colors">
+            {profiles.map((profile) => {
+              const isSuperAdmin = profile.id === SUPER_ADMIN_ID || profile.is_super_admin === true;
+              const canEditThis = !isSuperAdmin && (profile.id !== currentUserId || editingId !== null);
+              return (
+              <tr key={profile.id} className={`transition-colors ${isSuperAdmin ? 'bg-gradient-to-l from-emerald-50 to-white hover:from-emerald-50' : 'hover:bg-gray-50'}`}>
                 <td className="px-2 py-2 sm:px-6 sm:py-4">
-                  <div className="font-medium text-gray-900">{profile.full_name || 'بدون اسم'}</div>
-                  <div className="text-[10px] sm:text-sm text-gray-500 font-mono">{profile.email}</div>
+                  <div className="flex items-center gap-2">
+                    {isSuperAdmin && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-sm shrink-0" title="سوبر أدمن محمي — لا يمكن تعديله أو حذفه أو حظره من قبل أي مستخدم آخر">
+                        🔒 سوبر أدمن
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900 truncate">{profile.full_name || 'بدون اسم'}</div>
+                      <div className="text-[10px] sm:text-sm text-gray-500 font-mono truncate">{profile.email}</div>
+                    </div>
+                  </div>
                 </td>
                 
                 <td className="px-2 py-2 sm:px-6 sm:py-4 whitespace-nowrap">
@@ -393,6 +408,7 @@ export default function UserManagementPage() {
                     </select>
                   ) : (
                     <span className={`px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold ${
+                      isSuperAdmin ? 'bg-emerald-600 text-white shadow-sm' :
                       profile.role === 'admin' ? 'bg-purple-100 text-purple-800' :
                       profile.role === 'manager' ? 'bg-orange-100 text-orange-800' :
                       profile.role === 'accountant' ? 'bg-blue-100 text-blue-800' :
@@ -400,7 +416,7 @@ export default function UserManagementPage() {
                       profile.role === 'receptionist' ? 'bg-green-100 text-green-800' :
                       'bg-gray-100 text-gray-800'
                     }`}>
-                      {profile.role.toUpperCase()}
+                      {isSuperAdmin ? 'SUPER ADMIN' : profile.role.toUpperCase()}
                     </span>
                   )}
                 </td>
@@ -419,8 +435,8 @@ export default function UserManagementPage() {
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => handleSaveRole(profile.id)}
-                        disabled={saving}
-                        className="p-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                        disabled={saving || !canEditThis}
+                        className="p-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         title="حفظ"
                       >
                         {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
@@ -428,7 +444,7 @@ export default function UserManagementPage() {
                       <button 
                         onClick={() => setEditingId(null)}
                         disabled={saving}
-                        className="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                        className="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         title="إلغاء"
                       >
                         <X size={16} />
@@ -438,46 +454,64 @@ export default function UserManagementPage() {
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => handleEditClick(profile)}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 text-[11px] sm:text-sm transition-colors"
+                        disabled={!canEditThis}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-[11px] sm:text-sm transition-colors ${
+                          canEditThis
+                            ? 'border-gray-300 hover:bg-gray-50 text-gray-700'
+                            : 'border-gray-200 bg-gray-50 text-gray-400 opacity-50 cursor-not-allowed'
+                        }`}
+                        title={canEditThis ? 'تعديل الدور' : 'محمي — لا يمكن تعديل دور السوبر أدمن'}
                       >
                         <Edit size={14} />
                         <span>تعديل</span>
                       </button>
                       <button
                         onClick={() => openHotelsModal(profile)}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 text-[11px] sm:text-sm transition-colors"
-                        title="تحديد صلاحيات الفروع"
+                        disabled={!canEditThis}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-[11px] sm:text-sm transition-colors ${
+                          canEditThis
+                            ? 'border-gray-300 hover:bg-gray-50 text-gray-700'
+                            : 'border-gray-200 bg-gray-50 text-gray-400 opacity-50 cursor-not-allowed'
+                        }`}
+                        title={canEditThis ? 'تحديد صلاحيات الفروع' : 'محمي — لا يمكن تعديل صلاحيات الفروع للسوبر أدمن'}
                       >
                         <Building2 size={14} />
                         <span>الفروع</span>
                       </button>
                       <button
                         onClick={() => handleToggleBan(profile)}
-                        disabled={banningId === profile.id || profile.id === currentUserId}
+                        disabled={banningId === profile.id || profile.id === currentUserId || isSuperAdmin}
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-[11px] sm:text-sm transition-colors ${
-                          bannedIds[profile.id]
-                            ? 'border-emerald-300 hover:bg-emerald-50 text-emerald-700'
-                            : 'border-amber-300 hover:bg-amber-50 text-amber-800'
+                          isSuperAdmin
+                            ? 'border-gray-200 bg-gray-50 text-gray-400 opacity-50 cursor-not-allowed'
+                            : bannedIds[profile.id]
+                              ? 'border-emerald-300 hover:bg-emerald-50 text-emerald-700'
+                              : 'border-amber-300 hover:bg-amber-50 text-amber-800'
                         }`}
-                        title={bannedIds[profile.id] ? 'رفع الحظر' : 'حظر المستخدم'}
+                        title={isSuperAdmin ? 'محمي — لا يمكن حظر السوبر أدمن' : bannedIds[profile.id] ? 'رفع الحظر' : 'حظر المستخدم'}
                       >
                         {banningId === profile.id ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
-                        <span>{bannedIds[profile.id] ? 'رفع الحظر' : 'حظر'}</span>
+                        <span>{isSuperAdmin ? '—' : bannedIds[profile.id] ? 'رفع الحظر' : 'حظر'}</span>
                       </button>
                       <button
                         onClick={() => handleDeleteUser(profile.id, profile.email)}
-                        disabled={deletingId === profile.id}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 border border-red-300 rounded-md hover:bg-red-50 text-red-700 text-[11px] sm:text-sm transition-colors"
-                        title="حذف نهائي"
+                        disabled={deletingId === profile.id || isSuperAdmin}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-[11px] sm:text-sm transition-colors ${
+                          isSuperAdmin
+                            ? 'border-gray-200 bg-gray-50 text-gray-400 opacity-50 cursor-not-allowed'
+                            : 'border-red-300 hover:bg-red-50 text-red-700'
+                        }`}
+                        title={isSuperAdmin ? 'محمي — لا يمكن حذف السوبر أدمن' : 'حذف نهائي'}
                       >
                         {deletingId === profile.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        <span>حذف</span>
+                        <span>{isSuperAdmin ? '—' : 'حذف'}</span>
                       </button>
                     </div>
                   )}
                 </td>
               </tr>
-            ))}
+            );
+            })}
 
             {profiles.length === 0 && (
               <tr>
