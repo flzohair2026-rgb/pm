@@ -656,7 +656,7 @@ export default function CleaningPage() {
       if (!res.ok || !data.ok) {
         throw new Error(data?.error || 'Request failed');
       }
-      setUnits(prev => prev.map(u => u.id === completeUnit.id ? { ...u, status: 'available' } : u));
+      setUnits(prev => prev.map(u => u.id === completeUnit.id ? { ...u, status: 'cleaning' } : u));
       setIsCompleteModalOpen(false);
     } catch (err: any) {
       console.error('Error completing maintenance:', err);
@@ -2241,18 +2241,61 @@ export default function CleaningPage() {
                         {t('إنهاء صيانة', 'Complete maintenance', 'مرمت مکمل کریں', 'মেরামত সম্পন্ন')}
                       </button>
                     </div>
+                  ) : activeTab === 'available_units' ? (
+                    <div className="w-full flex flex-col sm:flex-row gap-2">
+                      <button
+                        onClick={() => updateUnitStatus(unit.id, 'cleaning')}
+                        disabled={updating === unit.id}
+                        className="flex-1 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <Brush size={15} />
+                        {t('إضافة للتنظيف', 'Add to cleaning', 'صفائی میں شامل کریں', 'পরিচ্ছন্নতায় যোগ করুন')}
+                      </button>
+                      <button
+                        onClick={() => openMaintenanceRequestModal(unit)}
+                        disabled={updating === unit.id}
+                        className="flex-1 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <Wrench size={15} />
+                        {t('إضافة للصيانة', 'Add to maintenance', 'مرمت میں شامل کریں', 'মেরামতে যোগ করুন')}
+                      </button>
+                    </div>
                   ) : (
-                    <select
-                      value={unit.status}
-                      onChange={(e) => updateUnitStatus(unit.id, e.target.value)}
-                      disabled={updating === unit.id}
-                      className="w-full py-2 px-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
-                    >
-                      <option value="available">{t('متاح (نظيف)', 'Available (clean)', 'دستیاب (صاف)', 'উপলব্ধ (পরিষ্কার)')}</option>
-                      <option value="cleaning">{t('يحتاج تنظيف', 'Needs cleaning', 'صفائی درکار', 'পরিষ্কার প্রয়োজন')}</option>
-                      <option value="maintenance">{t('صيانة', 'Maintenance', 'مرمت', 'মেরামত')}</option>
-                      <option value="occupied">{t('مشغول', 'Occupied', 'مصروف', 'ব্যস্ত')}</option>
-                    </select>
+                    <div className="w-full flex flex-col gap-2">
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        {unit.status !== 'cleaning' && (
+                          <button
+                            onClick={() => updateUnitStatus(unit.id, 'cleaning')}
+                            disabled={updating === unit.id}
+                            className="flex-1 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition-colors disabled:opacity-50"
+                          >
+                            <Brush size={14} />
+                            {t('للتنظيف', 'To cleaning', 'صفائی کو', 'পরিচ্ছন্নতায়')}
+                          </button>
+                        )}
+                        {unit.status !== 'maintenance' && (
+                          <button
+                            onClick={() => openMaintenanceRequestModal(unit)}
+                            disabled={updating === unit.id}
+                            className="flex-1 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition-colors disabled:opacity-50"
+                          >
+                            <Wrench size={14} />
+                            {t('للصيانة', 'To maintenance', 'مرمت کو', 'মেরামতে')}
+                          </button>
+                        )}
+                      </div>
+                      <select
+                        value={unit.status}
+                        onChange={(e) => updateUnitStatus(unit.id, e.target.value)}
+                        disabled={updating === unit.id}
+                        className="w-full py-2 px-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
+                      >
+                        <option value="available">{t('متاح (نظيف)', 'Available (clean)', 'دستیاب (صاف)', 'উপলব্ধ (পরিষ্কার)')}</option>
+                        <option value="cleaning">{t('يحتاج تنظيف', 'Needs cleaning', 'صفائی درکار', 'পরিষ্কার প্রয়োজন')}</option>
+                        <option value="maintenance">{t('صيانة', 'Maintenance', 'مرمت', 'মেরামত')}</option>
+                        <option value="occupied">{t('مشغول', 'Occupied', 'مصروف', 'ব্যস্ত')}</option>
+                      </select>
+                    </div>
                   )}
                 </div>
               </div>

@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { List, Calendar, Download, ArrowRight, Trash2, Loader2, FileText } from 'lucide-react';
+import { List, Calendar, Download, ArrowRight, Trash2, Loader2, FileText, Building2, User } from 'lucide-react';
 import { useUserRole } from '@/hooks/useUserRole';
 import RoleGate from '@/components/auth/RoleGate';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
@@ -177,6 +177,7 @@ interface Row {
   id: string;
   customer_id: string | null;
   customer_name: string;
+  customer_type?: string;
   phone?: string;
   email?: string;
   /** يوجد صف في customer_accounts (نفس مسار كشف الحساب قبل جلب الأرصدة) */
@@ -217,6 +218,7 @@ export default function BookingsLogReportPage() {
 
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingCustomerId, setTogglingCustomerId] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -225,6 +227,7 @@ export default function BookingsLogReportPage() {
   });
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [customerTypeFilter, setCustomerTypeFilter] = useState<string>('all');
   const [searchText, setSearchText] = useState('');
   const [printMode, setPrintMode] = useState<'standard' | 'installments'>('standard');
   const [indicatorFilter, setIndicatorFilter] = useState<string>('all');
@@ -298,7 +301,7 @@ export default function BookingsLogReportPage() {
       });
       const customerIds = [...customerIdSet];
 
-      const contactById: Record<string, { full_name: string; phone?: string; email?: string }> = {};
+      const contactById: Record<string, { full_name: string; phone?: string; email?: string; customer_type?: string }> = {};
       const hasAccountByCustomerId: Record<string, boolean> = {};
 
       const idChunkSize = 120;
@@ -307,7 +310,7 @@ export default function BookingsLogReportPage() {
           for (const chunk of fetchIdChunks(customerIds, idChunkSize)) {
             const { data: custs, error: cErr } = await supabase
               .from('customers')
-              .select('id, full_name, phone, email')
+              .select('id, full_name, phone, email, customer_type')
               .in('id', chunk);
             if (cErr) throw cErr;
             (custs || []).forEach((c: any) => {
@@ -315,6 +318,7 @@ export default function BookingsLogReportPage() {
                 full_name: c.full_name || 'بدون اسم',
                 phone: c.phone || undefined,
                 email: c.email || undefined,
+                customer_type: c.customer_type || 'individual',
               };
             });
           }
@@ -456,6 +460,7 @@ export default function BookingsLogReportPage() {
           id: b.id,
           customer_id: cid,
           customer_name: contact?.full_name || 'بدون عميل',
+          customer_type: contact?.customer_type || 'individual',
           phone: contact?.phone || '',
           email: contact?.email,
           has_customer_account: cid ? !!hasAccountByCustomerId[cid] : false,
@@ -522,6 +527,37 @@ export default function BookingsLogReportPage() {
     }
   };
 
+  const handleToggleCustomerType = async (customerId: string, currentType: string) => {
+    if (!customerId) return;
+
+    const newType = currentType === 'company' ? 'individual' : 'company';
+    const newLabel = newType === 'company' ? 'عميل شركة' : 'عميل مشغل';
+    const oldLabel = currentType === 'company' ? 'عميل شركة' : 'عميل مشغل';
+
+    if (!confirm(`هل أنت متأكد من تغيير تصنيف العميل من "${oldLabel}" إلى "${newLabel}"؟`)) return;
+
+    setTogglingCustomerId(customerId);
+    try {
+      const { error } = await supabase
+        .from('customers')
+        .update({ customer_type: newType })
+        .eq('id', customerId);
+
+      if (error) throw error;
+
+      setRows((prev) =>
+        prev.map((r) =>
+          r.customer_id === customerId ? { ...r, customer_type: newType } : r
+        )
+      );
+    } catch (err: any) {
+      console.error('Error toggling customer type:', err);
+      alert('تعذر تحديث تصنيف العميل: ' + (err.message || 'خطأ غير معروف'));
+    } finally {
+      setTogglingCustomerId(null);
+    }
+  };
+
   const hotelOptions = useMemo(() => {
     const map = new Map<string, string>();
     rows.forEach((r) => {
@@ -564,6 +600,15 @@ export default function BookingsLogReportPage() {
         }
       }
 
+      if (customerTypeFilter !== 'all') {
+        const custType = r.customer_type || 'individual';
+        if (customerTypeFilter === 'company' && custType !== 'company') {
+          return false;
+        } else if (customerTypeFilter === 'individual' && custType !== 'individual') {
+          return false;
+        }
+      }
+
       if (t) {
         const inName = (r.customer_name || '').includes(t);
         const inPhone = (r.phone || '').includes(t);
@@ -574,7 +619,7 @@ export default function BookingsLogReportPage() {
 
       return true;
     });
-  }, [rows, selectedHotelId, statusFilter, indicatorFilter, searchText]);
+  }, [rows, selectedHotelId, statusFilter, indicatorFilter, customerTypeFilter, searchText]);
 
   const totals = useMemo(() => {
     const count = filteredRows.length;
@@ -985,6 +1030,22 @@ export default function BookingsLogReportPage() {
                 </select>
               </div>
 
+              <div className="space-y-1.5">
+                <label className="text-xs sm:text-sm font-medium text-gray-700 flex items-center gap-1">
+                  <User size={14} />
+                  تصنيف العميل
+                </label>
+                <select
+                  value={customerTypeFilter}
+                  onChange={(e) => setCustomerTypeFilter(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                >
+                  <option value="all">كل العملاء</option>
+                  <option value="company">عميل شركة</option>
+                  <option value="individual">عميل مشغل</option>
+                </select>
+              </div>
+
               <div className="space-y-1.5 sm:col-span-2">
                 <label className="text-xs sm:text-sm font-medium text-gray-700">
                   بحث (اسم، هاتف، بريد، رقم وحدة)
@@ -1063,7 +1124,7 @@ export default function BookingsLogReportPage() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden overflow-x-auto">
-            <table className="w-full text-right min-w-[1350px]">
+            <table className="w-full text-right min-w-[1550px]">
               <thead className="bg-gray-100 border-b border-gray-200">
                 <tr>
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap w-12">
@@ -1071,6 +1132,9 @@ export default function BookingsLogReportPage() {
                   </th>
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
                     العميل
+                  </th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
+                    التصنيف
                   </th>
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
                     الهاتف
@@ -1121,14 +1185,16 @@ export default function BookingsLogReportPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={13}
+                      colSpan={14}
                       className="px-6 py-12 text-center text-gray-500"
                     >
                       جاري تحميل البيانات...
                     </td>
                   </tr>
                 ) : filteredRows.length > 0 ? (
-                  filteredRows.map((r) => (
+                  filteredRows.map((r) => {
+                    const isCompany = r.customer_type === 'company';
+                    return (
                     <tr key={r.id} className="hover:bg-gray-50 transition-colors odd:bg-white even:bg-gray-50">
                       <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
                         <div className="flex justify-center">
@@ -1140,6 +1206,34 @@ export default function BookingsLogReportPage() {
                       </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 font-medium text-gray-900 whitespace-nowrap">
                         {formatShortName(r.customer_name)}
+                      </td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
+                        {r.customer_id ? (
+                          <button
+                            onClick={() => handleToggleCustomerType(r.customer_id!, r.customer_type || 'individual')}
+                            disabled={togglingCustomerId === r.customer_id}
+                            title={isCompany ? 'عميل شركة - اضغط لتحويله إلى عميل مشغل' : 'عميل مشغل - اضغط لتحويله إلى عميل شركة'}
+                            className={`
+                              inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border-2 transition-all
+                              ${isCompany
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-300 hover:bg-indigo-100'
+                                : 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100'
+                              }
+                              disabled:opacity-50 disabled:cursor-not-allowed
+                            `}
+                          >
+                            {togglingCustomerId === r.customer_id ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : isCompany ? (
+                              <Building2 size={14} />
+                            ) : (
+                              <User size={14} />
+                            )}
+                            {isCompany ? 'عميل شركة' : 'عميل مشغل'}
+                          </button>
+                        ) : (
+                          <span className="text-gray-400 text-xs">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
                         {r.phone || '-'}
@@ -1208,11 +1302,11 @@ export default function BookingsLogReportPage() {
                         {formatStatusAr(r.status)}
                       </td>
                     </tr>
-                  ))
+                  )})
                 ) : (
                   <tr>
                     <td
-                      colSpan={13}
+                      colSpan={14}
                       className="px-6 py-12 text-center text-gray-500"
                     >
                       لا توجد بيانات ضمن الفترة المحددة
@@ -1238,6 +1332,19 @@ export default function BookingsLogReportPage() {
             </div>
             <div className="print-sub" style={{ marginBottom: '6px' }}>
               الفترة: {startDate} إلى {endDate}
+              {customerTypeFilter !== 'all' && (
+                <>
+                  <span style={{ marginRight: '16px' }}></span>
+                  تصنيف العملاء:
+                  <span style={{
+                    fontWeight: 'bold',
+                    marginRight: '6px',
+                    color: customerTypeFilter === 'company' ? '#4f46e5' : '#d97706'
+                  }}>
+                    {customerTypeFilter === 'company' ? 'عميل شركة' : 'عميل مشغل'}
+                  </span>
+                </>
+              )}
             </div>
             <div style={{ fontSize: '11px', color: '#6b7280' }}>
               تقرير تفصيلي للحجوزات بحسب الفلاتر المحددة. إجمالي الفاتورة من الفواتير؛ المدفوع والمتبقي من كشف الحساب
@@ -1314,6 +1421,7 @@ export default function BookingsLogReportPage() {
               <tr>
                 <th style={{ width: '20px' }}></th>
                 <th>العميل</th>
+                <th>التصنيف</th>
                 <th>الهاتف</th>
                 <th>الفندق</th>
                 <th>الوحدة (النوع)</th>
@@ -1337,6 +1445,8 @@ export default function BookingsLogReportPage() {
                   } else if (r.has_additional_services) {
                     dotColor = '#ef4444'; // أحمر
                   }
+                  const custTypeLabel = r.customer_type === 'company' ? 'عميل شركة' : 'عميل مشغل';
+                  const custTypeColor = r.customer_type === 'company' ? '#4f46e5' : '#d97706';
                   return (
                     <tr key={r.id}>
                       <td style={{ textAlign: 'center' }}>
@@ -1351,6 +1461,7 @@ export default function BookingsLogReportPage() {
                         />
                       </td>
                       <td>{formatShortName(r.customer_name)}</td>
+                      <td style={{ fontWeight: 'bold', color: custTypeColor }}>{custTypeLabel}</td>
                     <td>{r.phone || '-'}</td>
                     <td>{r.hotel_name || '-'}</td>
                     <td>
@@ -1375,7 +1486,7 @@ export default function BookingsLogReportPage() {
                 )})
               ) : (
                 <tr>
-                  <td colSpan={13} style={{ textAlign: 'center', padding: '12px' }}>
+                  <td colSpan={14} style={{ textAlign: 'center', padding: '12px' }}>
                     لا توجد بيانات ضمن الفترة المحددة
                   </td>
                 </tr>
@@ -1398,6 +1509,19 @@ export default function BookingsLogReportPage() {
             </div>
             <div className="print-sub" style={{ marginBottom: '6px' }}>
               الفترة: {startDate} إلى {endDate}
+              {customerTypeFilter !== 'all' && (
+                <>
+                  <span style={{ marginRight: '16px' }}></span>
+                  تصنيف العملاء:
+                  <span style={{
+                    fontWeight: 'bold',
+                    marginRight: '6px',
+                    color: customerTypeFilter === 'company' ? '#4f46e5' : '#d97706'
+                  }}>
+                    {customerTypeFilter === 'company' ? 'عميل شركة' : 'عميل مشغل'}
+                  </span>
+                </>
+              )}
             </div>
             <div style={{ fontSize: '10px', color: '#6b7280' }}>
               تقرير يوضح تقسيم مبالغ الحجوزات على أشهر الإقامة وحالة دفع كل شهر بناءً على إجمالي المبالغ المسددة.

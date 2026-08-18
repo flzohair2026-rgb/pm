@@ -150,7 +150,7 @@ export async function POST(req: Request) {
           if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
         }
 
-        const { error: unitError } = await admin.from('units').update({ status: 'available' }).eq('id', unit_id);
+        const { error: unitError } = await admin.from('units').update({ status: 'cleaning' }).eq('id', unit_id);
         if (unitError) return NextResponse.json({ ok: false, error: unitError.message }, { status: 500 });
 
         return NextResponse.json({ ok: true });
