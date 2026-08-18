@@ -46,8 +46,11 @@ function LoginInner() {
   };
 
   // ============================================================
-  // 🛰️ MANDATORY: request the browser's Precise Geolocation API
-  //   v005a — NO LOGIN IS ALLOWED unless this returns granted=true.
+  // 🛰️ OPTIONAL (v005b): request the browser's Precise Geolocation API
+  //   — If the user allows: we log the precise browser GPS coords
+  //     alongside the IP-based fallback for better audit trail.
+  //   — If the user DENIES or it fails: login is STILL allowed.
+  //     We just record geo as "not granted" and pass null coords.
   //   Triggered ONLY when the user clicks "دخول للنظام" (not on page load).
   // ============================================================
   const requestBrowserGeoLocation = (): Promise<BrowserGeoInfo> => {
@@ -171,24 +174,24 @@ function LoginInner() {
     const fingerprint = captureFingerprint();
 
     // ============================================================
-    // STEP 0 (MANDATORY v005a): REQUEST BROWSER GEO PERMISSION
-    //   If this fails for ANY reason → we DO NOT call signInWithPassword.
-    //   We still log a LOGIN_FAILURE audit record with the exact reason.
+    // STEP 0 (OPTIONAL v005b): ATTEMPT browser GEO permission
+    //   — If granted: attach browser GPS coords to the audit logs
+    //   — If DENIED / failed / timeout: login STILL proceeds.
+    //     We merely log geo_granted=false with null coords.
     // ============================================================
     setGeoRequesting(true);
     const browserGeo: BrowserGeoInfo = await requestBrowserGeoLocation();
     setGeoRequesting(false);
 
+    // 🔥 Always record the geo result (whether granted or not)
     if (!browserGeo.granted) {
-      const userMsg = humanizeGeoError(browserGeo);
-      // 🔥 Log this GEO-denial as a LOGIN_FAILURE audit (fire & forget)
       try {
         void fetch('/api/audit/log-login-failure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             email,
-            error: browserGeo.error_message || 'GEO_CONDITION_FAILED',
+            error: browserGeo.error_message || 'GEO_NOT_GRANTED_OPTIONAL',
             ...fingerprint,
             browser_geo_granted: false,
             browser_geo_lat: null,
@@ -197,9 +200,6 @@ function LoginInner() {
           }),
         }).catch(() => {});
       } catch {}
-      setError(userMsg);
-      setIsLoading(false);
-      return;  // ⛔ HALT LOGIN FLOW — no signIn attempt
     }
 
     try {
@@ -218,7 +218,7 @@ function LoginInner() {
               email,
               error: error?.message || 'Unknown auth failure',
               ...fingerprint,
-              browser_geo_granted: true,
+              browser_geo_granted: browserGeo.granted,
               browser_geo_lat: browserGeo.latitude,
               browser_geo_lon: browserGeo.longitude,
             }),
@@ -257,14 +257,14 @@ function LoginInner() {
       // Now includes:
       //   · device fingerprint (screen/lang/tz)
       //   · server-resolved GEO location (IP-based → country/city/ISP)
-      //   · 🔥 BROWSER PRECISE coords (GPS/WiFi → higher accuracy) — now mandatory
+      //   · 🔥 BROWSER PRECISE coords (GPS/WiFi → higher accuracy) — OPTIONAL
       try {
         void fetch('/api/tracking/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ...fingerprint,
-            browser_geo_granted: true,
+            browser_geo_granted: browserGeo.granted,
             browser_geo_lat: browserGeo.latitude,
             browser_geo_lon: browserGeo.longitude,
           }),

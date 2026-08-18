@@ -20,7 +20,10 @@ import {
   AlertTriangle,
   Award,
   Plus,
-  Wrench
+  Wrench,
+  ChevronDown,
+  PlusCircle,
+  ImageOff
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUserRole } from '@/hooks/useUserRole';
@@ -193,6 +196,7 @@ export default function CleaningPage() {
   const [cleaningLogs, setCleaningLogs] = useState<CleaningLog[]>([]);
   const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
   const [staffNotes, setStaffNotes] = useState<StaffNote[]>([]);
+  const [unitActiveMaintenance, setUnitActiveMaintenance] = useState<Map<string, MaintenanceLog>>(new Map());
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
   const [cleanerFilter, setCleanerFilter] = useState<string>('all');
@@ -200,6 +204,7 @@ export default function CleaningPage() {
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [rawHistoryTab, setRawHistoryTab] = useState<'cleaning' | 'maintenance'>('cleaning');
+  const [expandedMaintUnitId, setExpandedMaintUnitId] = useState<string | null>(null);
   const selectedHotelName = React.useMemo(() => {
     if (selectedHotelId === 'all') return t('الكل', 'All', 'تمام', 'সব');
     return hotels.find((h) => String(h.id) === String(selectedHotelId))?.name || '-';
@@ -794,12 +799,21 @@ export default function CleaningPage() {
         .from('invoices')
         .select('booking_id, total_invoiced, total_paid');
 
+      const activeMaintBase = supabase
+        .from('maintenance_logs')
+        .select(`
+          id, unit_id, issue_type, reported_by, reported_at, performed_by, performed_at,
+          notes, photo_before, photo_after, status, photo_data
+        `)
+        .in('status', ['pending', 'in_progress', 'completed'])
+        .order('reported_at', { ascending: false });
+
       const applyHotel = <Q extends { eq: (k: string, v: any) => Q }>(q: Q, hid: string) =>
         hid !== 'all' ? q.eq('hotel_id', hid) : q;
 
       // ===== التنفيذ المتوازي =====
       const [
-        unitsRes, activeRes, arrRes, depRes, ovrRes, upRes, coRes, tempRes, unpaidInv, invTotals
+        unitsRes, activeRes, arrRes, depRes, ovrRes, upRes, coRes, tempRes, unpaidInv, invTotals, activeMaintResRaw
       ] = await Promise.all([
         applyHotel(unitsBase, selectedHotelId),
         applyHotel(activeBookingsBase, selectedHotelId),
@@ -810,7 +824,8 @@ export default function CleaningPage() {
         applyHotel(checkedOutBase, selectedHotelId),
         applyHotel(tempResBase, selectedHotelId),
         applyHotel(unpaidInvBase, selectedHotelId),
-        applyHotel(invTotalsBase, selectedHotelId)
+        applyHotel(invTotalsBase, selectedHotelId),
+        activeMaintBase  // ⚡ لا نطبق فلتر الفندق مباشرة لأن maintenance_logs ليس فيه hotel_id
       ]);
 
       const unitsData: any[] = (unitsRes as any).data || [];
@@ -823,6 +838,57 @@ export default function CleaningPage() {
       const tempResList: any[] = (tempRes as any).data || [];
       const unpaidInvoices: any[] = (unpaidInv as any).data || [];
       const invoiceTotals: any[] = (invTotals as any).data || [];
+
+      // ===== تصفية سجلات الصيانات حسب وحدات الفندق المختار =====
+      // (لأن جدول maintenance_logs ليس فيه عمود hotel_id مباشرة)
+      const allowedUnitIds = new Set(unitsData.map((u: any) => String(u.id)));
+      const activeMaintListFull: any[] = (activeMaintResRaw as any).data || [];
+      const activeMaintList = activeMaintListFull.filter(
+        (row: any) => row?.unit_id && allowedUnitIds.has(String(row.unit_id))
+      );
+
+      // ===== جلب اسماء المبلغين (الصيانة) بشكل منفصل لتجنب فشل foreign-alias =====
+      const reportedUserIds = Array.from(new Set(
+        activeMaintList
+          .filter((r: any) => r?.reported_by)
+          .map((r: any) => String(r.reported_by))
+      ));
+      let repMap = new Map<string, string>();
+      if (reportedUserIds.length > 0) {
+        try {
+          const { data: repProfiles } = await supabase
+            .from('profiles')
+            .select('id, full_name, email')
+            .in('id', reportedUserIds);
+          (repProfiles || []).forEach((p: any) => {
+            if (p?.id) repMap.set(String(p.id), p.full_name || p.email || '');
+          });
+        } catch (_) { /* ignore */ }
+      }
+
+      // ===== بناء Map الصيانات النشطة لكل وحدة (احدث سجل لكل وحدة) =====
+      const maintMap = new Map<string, MaintenanceLog>();
+      activeMaintList.forEach((row: any) => {
+        if (!row?.unit_id) return;
+        if (maintMap.has(row.unit_id)) return;
+        const photoBefore = row.photo_before || row.photo_data || null;
+        maintMap.set(row.unit_id, {
+          id: row.id,
+          unit_id: row.unit_id,
+          issue_type: row.issue_type,
+          reported_by: row.reported_by,
+          reported_at: row.reported_at,
+          performed_by: row.performed_by,
+          performed_at: row.performed_at,
+          notes: row.notes,
+          completion_notes: row.completion_notes || row.notes || null,
+          photo_before: photoBefore,
+          photo_after: row.photo_after || null,
+          status: row.status as any,
+          reporter_name: row.reported_by ? (repMap.get(String(row.reported_by)) || '') : '',
+        } as MaintenanceLog);
+      });
+      setUnitActiveMaintenance(maintMap);
 
       // ===== بناء الـ Maps مثل RoomStatusWithDate =====
       const custName = (row: any): string => {
@@ -1003,12 +1069,15 @@ export default function CleaningPage() {
           .filter((b: any) => b.unit_id === u.id)
           .map((b: any) => ({ start: b.check_in, end: b.check_out }));
 
-        // محاسبة الحالة بناءً على الحجز — بالضبط مثل RoomStatusGrid
+        // محاسبة الحالة بناءً على الحجز — مع الحفاظ على حالة الصيانة/التنظيف حتى لو كان هناك حجز
         let status: Unit['status'] = u.status || 'available';
+        const hardBlocked = ['maintenance', 'cleaning', 'unavailable'].includes(status);
         if (active) {
-          status = String(active.booking_status || '').toLowerCase() === 'checked_in' ? 'occupied' : 'booked';
+          if (!hardBlocked) {
+            status = String(active.booking_status || '').toLowerCase() === 'checked_in' ? 'occupied' : 'booked';
+          }
         } else {
-          if (!['maintenance', 'cleaning', 'unavailable'].includes(status)) status = 'available';
+          if (!hardBlocked) status = 'available';
         }
         const up = !active ? upcomingMap.get(u.id) : null;
         if (!active && status === 'available' && up) {
@@ -2204,6 +2273,204 @@ export default function CleaningPage() {
                     </span>
                   )}
                 </div>
+
+                {/* 🔧 تفاصيل الصيانة — يظهر عند النقر على البطاقة (يُوسّع / يُطوّى) */}
+                {(() => {
+                  const maint = unitActiveMaintenance.get(unit.id);
+                  const hasAnyMaintSignal = !!maint || unit.status === 'maintenance';
+                  if (!hasAnyMaintSignal) return null;
+
+                  const isExpanded = expandedMaintUnitId === unit.id;
+                  const typeLabels: Record<string, { ar: string; en: string; emoji: string }> = {
+                    plumbing: { ar: 'سباكة', en: 'Plumbing', emoji: '🚿' },
+                    electrical: { ar: 'كهرباء', en: 'Electrical', emoji: '⚡' },
+                    hvac: { ar: 'تكييف', en: 'HVAC', emoji: '❄️' },
+                    furniture: { ar: 'أثاث', en: 'Furniture', emoji: '🛋️' },
+                    cleaning: { ar: 'تنظيف عميق', en: 'Deep cleaning', emoji: '🧹' },
+                    pest: { ar: 'مكافحة حشرات', en: 'Pest control', emoji: '🐛' },
+                    carpentry: { ar: 'نجارة', en: 'Carpentry', emoji: '🪚' },
+                    paint: { ar: 'دهان / جدار', en: 'Painting / Walls', emoji: '🎨' },
+                    appliance: { ar: 'أجهزة', en: 'Appliance', emoji: '🧊' },
+                    other: { ar: 'أخرى', en: 'Other', emoji: '🛠️' },
+                  };
+                  const statusLabels: Record<string, { ar: string; en: string; color: string }> = {
+                    pending: { ar: 'قيد الانتظار', en: 'Pending', color: 'bg-amber-50 text-amber-700 ring-amber-200' },
+                    in_progress: { ar: 'قيد التنفيذ', en: 'In progress', color: 'bg-sky-50 text-sky-700 ring-sky-200' },
+                    completed: { ar: 'منجزة — بانتظار التأكيد', en: 'Completed — awaiting confirm', color: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+                    confirmed: { ar: 'مؤكدة', en: 'Confirmed', color: 'bg-gray-50 text-gray-700 ring-gray-200' },
+                  };
+                  const issueType = maint?.issue_type || 'other';
+                  const tl = typeLabels[issueType] || typeLabels.other;
+                  const st = maint?.status && statusLabels[maint.status] ? statusLabels[maint.status] : statusLabels.pending;
+                  const fmtTime = (d?: string | null) => {
+                    if (!d) return null;
+                    try {
+                      return new Date(d).toLocaleString(dateLocale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    } catch { return d; }
+                  };
+
+                  return (
+                    <div className="mt-2">
+                      {/* زر توسيع / طي — عند النقر تظهر التفاصيل */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setExpandedMaintUnitId(prev => prev === unit.id ? null : unit.id); }}
+                        className={cn(
+                          "w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors",
+                          unit.status === 'maintenance' && !maint
+                            ? "bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100"
+                            : "bg-red-50/80 border border-red-200 text-red-800 hover:bg-red-100"
+                        )}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Wrench size={14} className="flex-shrink-0" />
+                          {unit.status === 'maintenance' && !maint ? (
+                            <span className="flex items-center gap-1">
+                              ⚠️ {t('صيانة بدون تفاصيل — اضغط للإكمال', 'Maintenance without details — tap to complete', 'مرمت بغیر تفصیلات — مکمل کرنے پر کلک کریں', 'বিস্তারিত ছাড়া মেরামত — পূরণ করতে ট্যাপ করুন')}
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5">
+                              <span>{tl.emoji}</span>
+                              <span>{t('تفاصيل الصيانة:', 'Maintenance details:', 'مرمت کی تفصیلات:', 'মেরামতের বিবরণ:')}</span>
+                              <span className="font-bold">{language === 'en' ? tl.en : tl.ar}</span>
+                            </span>
+                          )}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium ring-1 whitespace-nowrap", st.color)}>
+                            {language === 'en' ? st.en : st.ar}
+                          </span>
+                          <ChevronDown size={14} className={cn("transition-transform flex-shrink-0", isExpanded ? "rotate-180" : "")} />
+                        </span>
+                      </button>
+
+                      {/* قسم التوسيع: التفاصيل داخلية */}
+                      {isExpanded && (
+                        <div className="mt-2 p-3 rounded-lg bg-red-50/70 border border-red-200 ring-1 ring-red-100 space-y-2 animate-[fadeIn_0.2s_ease-out]">
+                          {unit.status === 'maintenance' && !maint ? (
+                            /* =============================================================
+                               الحالة الخاصة: الوحدة محولة للصيانة سريعاً (بدون سجل تفاصيل)
+                               ============================================================= */
+                            <div className="space-y-3">
+                              <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[11.5px] text-amber-800 leading-relaxed">
+                                <div className="font-bold mb-1 flex items-center gap-1">
+                                  ⚠️ {t('تنبيه:', 'Notice:', 'نوٹیس:', 'নোট:')}
+                                </div>
+                                {t('هذه الوحدة تم تحويلها للصيانة بسرعة من صفحة الوحدات دون إبلاغ مشكلة أو رفع صورة. يمكنك الآن إرفاق تفاصيل المشكلة والصورة بالنقر على الزر أدناه.', 'This unit was quickly moved to maintenance (from the units grid) without an issue report or photo. You can now attach the issue details + photo using the button below.', 'اس یونٹ کو یونٹس گرڈ سے فوری طور پر مرمت میں منتقل کیا گیا تھا بغیر کسی مسئلہ کی اطلاع یا تصویر کے۔ اب آپ نیچے والے بٹن سے مسئلے کی تفصیلات اور تصویر منسلک کر سکتے ہیں۔', 'এই ইউনিটটি ইস্যু রিপোর্ট বা ছবি ছাড়াই ইউনিট গ্রিড থেকে দ্রুত মেরামতে স্থানান্তরিত হয়েছিল। আপনি নীচের বোতামটি ব্যবহার করে এখন ইস্যুর বিবরণ + ছবি সংযুক্ত করতে পারেন।')}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => openMaintenanceRequestModal(unit)}
+                                className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm shadow-red-200"
+                              >
+                                <PlusCircle size={15} />
+                                {t('إرفاق تفاصيل الصيانة والصورة الآن', 'Attach maintenance details & photo now', 'ابھی مرمت کی تفصیلات اور تصویر منسلک کریں', 'এখনই মেরামতের বিবরণ ও ছবি সংযুক্ত করুন')}
+                              </button>
+                            </div>
+                          ) : (
+                            /* =============================================================
+                               الحالة العادية: يوجد سجل صيانة فعلي → نعرض كل التفاصيل
+                               ============================================================= */
+                            <>
+                              {/* عنوان + حالة الصيانة */}
+                              <div className="flex items-start justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 text-sm font-semibold text-red-800">
+                                  <span>{tl.emoji}</span>
+                                  <span>{language === 'en' ? tl.en : tl.ar}</span>
+                                </div>
+                              </div>
+
+                              {/* المُبلغ + التاريخ */}
+                              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-red-700/90">
+                                {maint?.reported_at && (
+                                  <span className="flex items-center gap-1">
+                                    📅 {fmtTime(maint.reported_at)}
+                                  </span>
+                                )}
+                                {maint?.reporter_name && (
+                                  <span className="flex items-center gap-1">
+                                    <User size={10} /> {maint.reporter_name}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* الملاحظات */}
+                              {maint?.notes && (
+                                <div className="text-[11.5px] text-red-900/85 leading-relaxed bg-white/60 rounded-md px-2.5 py-1.5 border border-red-100 whitespace-pre-wrap">
+                                  💬 {maint.notes}
+                                </div>
+                              )}
+                              {!maint?.notes && (
+                                <div className="text-[11px] text-red-700/60 italic px-1">
+                                  {t('(لا يوجد وصف مفصل للمشكلة)', '(No detailed issue description)', '(کوئی تفصیلی مسئلہ کا بیان نہیں)', '(কোনো বিস্তারিত ইস্যু বিবরণ নেই)')}
+                                </div>
+                              )}
+
+                              {/* صورة قبل الصيانة */}
+                              {maint?.photo_before && (
+                                <div className="pt-1">
+                                  <p className="text-[10.5px] font-bold text-red-700 mb-1.5">
+                                    📷 {t('صورة قبل الصيانة (اضغط للتكبير):', 'Before photo (tap to enlarge):', 'مرمت سے پہلے کی تصویر (بڑا کرنے پر کلک کریں):', 'মেরামতের আগের ছবি (বড় করতে ট্যাপ করুন):')}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedImage(maint.photo_before!)}
+                                    className="group relative block w-full rounded-lg overflow-hidden border-2 border-red-200/70 hover:border-red-400 transition-colors shadow-sm"
+                                  >
+                                    <img
+                                      src={maint.photo_before}
+                                      alt={t('صورة قبل الصيانة', 'Before photo', 'مرمت سے پہلے کی تصویر', 'মেরামতের আগের ছবি')}
+                                      className="w-full h-44 object-cover group-hover:scale-[1.01] transition-transform"
+                                    />
+                                  </button>
+                                </div>
+                              )}
+                              {!maint?.photo_before && (
+                                <div className="pt-1">
+                                  <div className="w-full h-24 rounded-lg border-2 border-dashed border-red-200 bg-red-50/50 flex flex-col items-center justify-center gap-1 text-red-600/60">
+                                    <ImageOff size={22} />
+                                    <span className="text-[10.5px]">
+                                      {t('(لم يتم رفع صورة قبل)', '(No before photo uploaded)', '(پہلے سے کوئی تصویر اپ لوڈ نہیں کی گئی)', '(কোনো আগের ছবি আপলোড করা হয়নি)')}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* ملاحظات الإنجاز + صورة بعد */}
+                              {maint?.status === 'completed' && (
+                                <div className="border-t border-red-200/60 pt-2 space-y-2 mt-1">
+                                  {maint.completion_notes && (
+                                    <div className="text-[11.5px] text-emerald-800 leading-relaxed bg-emerald-50/70 rounded-md px-2.5 py-1.5 border border-emerald-200 whitespace-pre-wrap">
+                                      ✅ {maint.completion_notes}
+                                    </div>
+                                  )}
+                                  {maint.photo_after && (
+                                    <>
+                                      <p className="text-[10.5px] font-bold text-emerald-700 mb-1.5">
+                                        📷 {t('صورة بعد الصيانة:', 'After photo:', 'مرمت کے بعد کی تصویر:', 'মেরামতের পরের ছবি:')}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedImage(maint.photo_after!)}
+                                        className="group relative block w-full rounded-lg overflow-hidden border-2 border-emerald-200 hover:border-emerald-400 transition-colors shadow-sm"
+                                      >
+                                        <img
+                                          src={maint.photo_after}
+                                          alt={t('صورة بعد الصيانة', 'After photo', 'مرمت کے بعد کی تصویر', 'মেরামতের পরের ছবি')}
+                                          className="w-full h-44 object-cover group-hover:scale-[1.01] transition-transform"
+                                        />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Actions */}
                 <div className="mt-auto pt-3 border-t border-gray-100 flex gap-2">
