@@ -6,24 +6,26 @@ import { createClient } from '@/lib/supabase-server';
 export const runtime = 'nodejs';
 
 const TABLES: Array<{ name: string; sheetName?: string }> = [
+  { name: 'accounting_periods' },
+  { name: 'cost_centers' },
+  { name: 'accounts' },
   { name: 'hotels' },
-  { name: 'units' },
   { name: 'unit_types' },
-  { name: 'customers' },
-  { name: 'bookings' },
-  { name: 'invoices' },
-  { name: 'payments' },
   { name: 'payment_methods' },
+  { name: 'customers' },
+  { name: 'customer_accounts' },
+  { name: 'profiles' },
+  { name: 'units' },
+  { name: 'bookings' },
   { name: 'temporary_reservations' },
+  { name: 'invoices' },
+  { name: 'journal_entries' },
+  { name: 'payments' },
+  { name: 'payment_allocations' },
+  { name: 'journal_lines' },
+  { name: 'system_events' },
   { name: 'ejar_contract_uploads' },
   { name: 'documents' },
-  { name: 'profiles' },
-  { name: 'system_events' },
-  { name: 'journal_entries' },
-  { name: 'journal_lines' },
-  { name: 'accounts' },
-  { name: 'customer_accounts' },
-  { name: 'payment_allocations' },
 ];
 
 const BATCH_SIZE = 1000;

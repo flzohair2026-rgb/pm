@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import styles from './BookingWizard.module.css';
 import { CustomerStep, Customer } from './steps/CustomerStep';
 import { UnitSelectionStep } from './steps/UnitSelectionStep';
 import { PricingStep, PricingResult } from './steps/PricingStep';
@@ -34,7 +35,7 @@ export interface BookingData {
   bookingType?: 'daily' | 'monthly' | 'yearly';
   customerPreferences?: string;
   companions?: Array<{ name: string; national_id?: string }>;
-  bookingSource?: 'reception' | 'platform' | 'broker';
+  bookingSource?: 'reception' | 'platform' | 'broker' | 'website' | 'api' | 'walk_in' | 'phone' | 'quick';
   platformName?: string;
   brokerName?: string;
   brokerId?: string;
@@ -48,7 +49,7 @@ const STEPS = [
   { id: 'confirm', label: { ar: 'تأكيد', en: 'Confirm' }, icon: CheckCircle },
 ];
 
-export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId?: string; initialQuery?: string; initialCheckIn?: string; initialCheckOut?: string; language?: AppLanguage }> = ({ initialCustomer, initialUnitId, initialQuery, initialCheckIn, initialCheckOut, language: languageProp }) => {
+export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId?: string; initialQuery?: string; initialCheckIn?: string; initialCheckOut?: string; language?: AppLanguage; mode?: 'create' | 'complete'; completeBookingId?: string; completeBookingData?: any }> = ({ initialCustomer, initialUnitId, initialQuery, initialCheckIn, initialCheckOut, language: languageProp, mode = 'create', completeBookingId, completeBookingData }) => {
   const { language: storedLanguage } = useAppLanguage();
   const language = languageProp ?? storedLanguage;
   const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
@@ -255,6 +256,9 @@ export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId
                 onSuccess={handleFinalSuccess}
                 onBack={handleBack}
                 language={language as 'ar' | 'en'}
+                mode={mode}
+                completeBookingId={completeBookingId}
+                completeBookingData={completeBookingData}
             />
         );
       default:
@@ -266,70 +270,49 @@ export const BookingWizard: React.FC<{ initialCustomer?: Customer; initialUnitId
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* Stepper Header - Compact & Elegant */}
-      <div className="mb-6 md:mb-8 bg-gradient-to-br from-emerald-50 via-white to-white rounded-2xl shadow-sm ring-1 ring-emerald-100/70 p-4 md:p-6">
-        <div className="overflow-x-auto pb-2 -mb-2 hide-scrollbar">
-            <div className="relative flex justify-between items-start px-2 md:px-4 min-w-[400px] md:min-w-0">
-            
-            {/* Progress Lines Wrapper - Aligned with circle centers */}
-            <div className="absolute top-4 left-0 right-0 mx-6 md:mx-8 h-0.5 -z-10">
-                {/* Background Line */}
-                <div className="absolute inset-0 bg-emerald-100/80" />
-                
-                {/* Active Progress Line */}
-                <div 
-                className="absolute top-0 right-0 h-full bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 transition-all duration-500"
-                style={{ width: `${(currentStepIndex / (STEPS.length - 1)) * 100}%` }}
-                />
-            </div>
-
-            {steps.map((step, index) => {
-                const isActive = index === currentStepIndex;
-                const isCompleted = index < currentStepIndex;
-                const Icon = step.icon;
-
-                return (
-                <div key={step.id} className="flex flex-col items-center group cursor-default relative z-10">
-                    <div 
-                    className={`
-                        w-9 h-9 rounded-full flex items-center justify-center transition-all duration-300
-                        ${isActive ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm scale-110 ring-2 ring-emerald-900/15' : 
-                        isCompleted ? 'bg-white/70 text-emerald-700 ring-1 ring-emerald-200/70' : 
-                        'bg-white/70 text-gray-400 ring-1 ring-emerald-100/70'}
-                    `}
-                    >
-                    {isCompleted ? <CheckCircle size={14} /> : <Icon size={14} />}
-                    </div>
-                    <span className={`mt-3 text-[10px] font-extrabold transition-colors duration-300 text-center w-16 md:w-20 ${isActive ? 'text-emerald-950' : isCompleted ? 'text-emerald-800' : 'text-gray-400'}`}>
-                    {step.label}
-                    </span>
-                </div>
-                );
-            })}
-            </div>
+    <div dir={language === 'en' ? 'ltr' : 'rtl'} className="mx-auto w-full max-w-6xl space-y-4">
+      <section aria-label={t('مراحل تسجيل الحجز', 'Booking progress')} className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="mb-4 flex items-center justify-between gap-3 border-b border-stone-100 pb-4">
+          <div className="flex items-center gap-2.5"><span className="flex size-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-900"><Calendar size={17} /></span>
+            <div><p className="text-xs font-semibold text-stone-800">{mode === 'complete' ? t('إكمال إجراءات الحجز', 'Complete booking') : t('تسجيل حجز جديد', 'Create a booking')}</p><p className="mt-1 text-[10px] text-stone-400">{t('بيانات منظمة، خطوة بخطوة', 'One clear step at a time')}</p></div>
+          </div>
+          <span className="shrink-0 rounded-full bg-stone-100 px-3 py-1.5 text-[11px] font-medium tabular-nums text-stone-500">{t('خطوة', 'Step')} {currentStepIndex + 1} / {steps.length}</span>
         </div>
-      </div>
+        <ol className="grid grid-cols-5 gap-1.5 sm:gap-3">
+          {steps.map((step, index) => {
+            const active = index === currentStepIndex;
+            const completed = index < currentStepIndex;
+            const Icon = step.icon;
+            return <li key={step.id} aria-current={active ? 'step' : undefined} className={`min-w-0 rounded-xl px-1 py-2 text-center sm:flex sm:items-center sm:gap-2.5 sm:px-3 sm:text-start ${active ? 'bg-emerald-50 ring-1 ring-emerald-100' : ''}`}>
+              <span className={`mx-auto flex size-8 shrink-0 items-center justify-center rounded-lg sm:mx-0 sm:size-9 ${active ? 'bg-emerald-900 text-white shadow-sm' : completed ? 'bg-emerald-50 text-emerald-700' : 'bg-stone-100 text-stone-400'}`}>
+                {completed ? <CheckCircle size={16} /> : <Icon size={16} />}
+              </span>
+              <span className={`mt-2 block break-words text-[10px] leading-4 sm:mt-0 sm:text-[11px] ${active ? 'font-bold text-emerald-950' : completed ? 'font-medium text-stone-700' : 'text-stone-400'}`}>{step.label}</span>
+            </li>;
+          })}
+        </ol>
+        <div role="progressbar" aria-label={t('تقدم خطوات الحجز', 'Booking step progress')} aria-valuemin={1} aria-valuemax={steps.length} aria-valuenow={currentStepIndex + 1} className="mt-4 h-1 overflow-hidden rounded-full bg-stone-100">
+          <div className="h-full rounded-full bg-emerald-700 transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${((currentStepIndex + 1) / steps.length) * 100}%` }} />
+        </div>
+      </section>
 
-      {/* Step Content */}
-      <div className="bg-white rounded-2xl shadow-lg shadow-gray-100/50 border border-gray-100 overflow-hidden min-h-[500px]">
-        <div className="p-6">
-          <div className="mb-6 pb-4 border-b border-gray-100">
-            <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
-              {steps[currentStepIndex].label}
-            </h2>
-            <p className="text-gray-500 mt-2 text-base">
-              {currentStep === 'customer' && t('ابدأ باختيار العميل أو إنشاء ملف جديد للمتابعة', 'Start by selecting a customer or creating a new profile')}
-              {currentStep === 'unit' && t('حدد نوع الوحدة وتواريخ الإقامة المناسبة', 'Choose the unit type and your stay dates')}
-              {currentStep === 'price' && t('مراجعة تفاصيل التكلفة وتطبيق الخصومات', 'Review price details and apply discounts')}
-              {currentStep === 'deposit' && t('تسجيل العربون أو الدفعة المقدمة لتأكيد الحجز', 'Record a deposit/payment to confirm the booking')}
-              {currentStep === 'confirm' && t('مراجعة نهائية وإصدار وثائق الحجز', 'Final review and issue booking documents')}
+      <section aria-labelledby="booking-step-title" className="min-w-0 rounded-2xl border border-stone-200 bg-white shadow-sm">
+        <div className="flex items-start gap-3 border-b border-stone-100 px-4 py-5 sm:px-7 sm:py-6">
+          <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-full border border-stone-200 text-xs font-semibold tabular-nums text-stone-400">0{currentStepIndex + 1}</span>
+          <div><h2 id="booking-step-title" className="text-lg font-bold tracking-tight text-stone-900 sm:text-xl">{steps[currentStepIndex].label}</h2>
+            <p className="mt-1.5 text-xs leading-6 text-stone-500">
+              {currentStep === 'customer' && t('اختر العميل من السجل أو أضف بيانات عميل جديد.', 'Select an existing customer or add a new customer.')}
+              {currentStep === 'unit' && t('اختر الوحدة وحدد تاريخ الوصول والمغادرة.', 'Choose a unit and set the check-in and check-out dates.')}
+              {currentStep === 'price' && t('راجع تكلفة الإقامة والخدمات الإضافية والخصومات.', 'Review stay costs, additional services and discounts.')}
+              {currentStep === 'deposit' && t('حدد قيمة العربون وطريقة الدفع وحالة الاستلام.', 'Set the deposit amount, payment method and receipt status.')}
+              {currentStep === 'confirm' && t('تأكد من صحة البيانات والمبالغ قبل اعتماد الحجز.', 'Check the details and amounts before confirming the booking.')}
             </p>
           </div>
-
+        </div>
+        <div className={`${styles.form} min-w-0 p-4 sm:p-6 lg:p-7`}>
           {renderStep()}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

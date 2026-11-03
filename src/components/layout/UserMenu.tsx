@@ -127,21 +127,24 @@ export default function UserMenu() {
   return (
     <div className="relative" ref={menuRef}>
       <button 
+        type="button"
+        aria-label={`قائمة الحساب: ${displayName}`}
+        aria-expanded={isOpen}
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-3 pr-4 border-r border-gray-200 hover:bg-gray-50 p-2 rounded-lg transition-colors"
+        className="flex min-h-11 items-center gap-2 rounded-xl p-1.5 text-start transition-colors hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-emerald-700 sm:gap-3"
       >
-        <div className="text-right hidden md:block">
-          <p className="text-sm font-bold text-gray-900">{displayName}</p>
-          <p className="text-xs text-gray-500">{displayRole}</p>
+        <div className="hidden min-w-0 text-start xl:block">
+          <p className="max-w-36 truncate text-xs font-bold text-stone-800">{displayName}</p>
+          <p className="mt-1 text-[10px] text-stone-400">{displayRole}</p>
         </div>
-        <div className="w-9 h-9 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 border border-blue-100">
-          <User size={18} />
+        <div aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-emerald-900 text-sm font-bold text-white shadow-sm">
+          {displayName.trim().charAt(0).toUpperCase() || <User size={18} />}
         </div>
         <ChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50 origin-top-left animate-in fade-in zoom-in-95 duration-200">
+        <div className="absolute end-0 z-50 mt-3 w-60 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-stone-200 bg-white p-1 shadow-xl shadow-stone-900/10 motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-150">
           <div className="p-3 border-b border-gray-50">
             <p className="text-sm font-semibold text-gray-900 truncate">{displayName}</p>
             <p className="text-xs text-gray-500 truncate">{user?.email}</p>

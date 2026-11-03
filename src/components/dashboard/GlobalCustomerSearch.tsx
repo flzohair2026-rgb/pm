@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Search, Phone, User, AlertCircle, Calendar, BedDouble, Users, Loader2, Wrench, Copy } from 'lucide-react';
 import { UnitType, PricingRule, calculateStayPrice } from '@/lib/pricing';
 import { parseISO, isBefore, differenceInCalendarDays, format, addDays } from 'date-fns';
 import { useAppLanguage } from '@/hooks/useAppLanguage';
+import SearchResultsDialog from './SearchResultsDialog';
 
 type CustomerSummary = {
   id: string;
@@ -45,11 +46,13 @@ type AvailabilitySummary = {
   nights: number;
 };
 
-export default function GlobalCustomerSearch({ language: languageProp }: { language?: 'ar' | 'en' }) {
+export default function GlobalCustomerSearch({ language: languageProp, compact = false }: { language?: 'ar' | 'en'; compact?: boolean }) {
   const { language: storedLanguage } = useAppLanguage();
   const language = languageProp ?? storedLanguage;
   const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
   const [mode, setMode] = useState<'customer' | 'availability'>('customer');
+  const searchId = useId();
+  const [resultsOpen, setResultsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +91,7 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
     e.preventDefault();
     const value = query.trim();
     if (!value) return;
+    setResultsOpen(true);
 
     setLoading(true);
     setError(null);
@@ -257,6 +261,7 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
 
   const handleAvailabilityCheck = async (e: React.FormEvent) => {
     e.preventDefault();
+    setResultsOpen(true);
     setAvailabilityError(null);
     setAvailabilitySummary(null);
     setAvailableUnits([]);
@@ -391,17 +396,21 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
   };
 
   return (
-    <div className="bg-gradient-to-br from-emerald-50 via-white to-white p-4 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all">
-      <div className="flex items-center justify-between mb-4">
+    <div dir={language === 'en' ? 'ltr' : 'rtl'} className={compact ? 'flex h-full min-w-0 flex-col rounded-2xl bg-white p-4 sm:p-5' : 'min-w-0 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5'}>
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
         <h3 className="font-bold text-gray-900 flex items-center gap-2">
           <Search size={18} className="text-emerald-700" />
           {t('البحث السريع', 'Quick search')}
         </h3>
-        <div className="flex bg-white/70 ring-1 ring-emerald-200/70 p-1 rounded-xl text-xs">
+        <p className="mt-1.5 text-xs leading-5 text-stone-500">{t('الوصول لبيانات العميل أو التحقق من توفر الوحدات', 'Find a customer or check unit availability')}</p>
+        </div>
+        <div role="group" aria-label={t('نوع البحث', 'Search mode')} className="grid shrink-0 grid-cols-2 gap-1 rounded-xl bg-stone-100 p-1 text-xs">
           <button
             type="button"
             onClick={() => setMode('customer')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+            aria-pressed={mode === 'customer'}
+            className={`min-h-10 px-3 py-2 rounded-lg font-bold transition-colors focus-visible:outline-2 focus-visible:outline-emerald-700 ${
               mode === 'customer'
                 ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
                 : 'text-emerald-900/70 hover:text-emerald-900'
@@ -412,7 +421,8 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
           <button
             type="button"
             onClick={() => setMode('availability')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+            aria-pressed={mode === 'availability'}
+            className={`min-h-10 px-3 py-2 rounded-lg font-bold transition-colors focus-visible:outline-2 focus-visible:outline-emerald-700 ${
               mode === 'availability'
                 ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
                 : 'text-emerald-900/70 hover:text-emerald-900'
@@ -425,10 +435,11 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
 
       {mode === 'customer' && (
         <>
-          <form onSubmit={handleCustomerSubmit} className="space-y-3">
+          <form onSubmit={handleCustomerSubmit} className={compact ? 'grid items-start gap-2 sm:grid-cols-[minmax(0,1fr)_auto]' : 'space-y-3'}>
             <div className="relative">
               <input
-                className="w-full rounded-xl ring-1 ring-emerald-200/70 bg-white/70 py-2.5 pr-3 pl-10 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0"
+                aria-label={t('اسم العميل أو الجوال أو الهوية', 'Customer name, mobile, or ID')}
+                className="min-h-11 w-full rounded-xl ring-1 ring-emerald-200/70 bg-white/70 py-2.5 pr-3 pl-10 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0"
                 placeholder={t('ابحث عن عميل بالاسم أو الجوال أو الهوية...', 'Search by name, mobile, or ID...')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -439,11 +450,12 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
             <button
               type="submit"
               disabled={loading || !query.trim()}
-              className="w-full py-2.5 rounded-xl text-sm font-extrabold bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+              className={compact ? 'min-h-11 rounded-xl bg-emerald-900 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700' : 'w-full py-2.5 rounded-xl text-sm font-extrabold bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md'}
             >
               {loading ? t('جاري البحث...', 'Searching...') : t('بحث عن العميل', 'Search customer')}
             </button>
           </form>
+          <SearchResultsDialog open={resultsOpen} onOpenChange={setResultsOpen} title={t('نتيجة البحث عن العميل', 'Customer search result')} loading={loading} language={language}>
           {error && (
             <div className="mt-3 flex items-start gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
               <AlertCircle size={14} />
@@ -451,8 +463,8 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
             </div>
           )}
           {result && (
-            <div className="mt-4 space-y-4">
-              <div className="flex items-center justify-between">
+            <section aria-label={t('نتيجة البحث عن العميل', 'Customer search result')} className="space-y-4 [overflow-wrap:anywhere]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
                     <User size={18} className="text-emerald-700" />
@@ -600,7 +612,7 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
                     : t('لا توجد ملاحظات مسجلة لهذا العميل.', 'No notes recorded for this customer.')}
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={async () => {
@@ -631,8 +643,9 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
                   {copiedId ? t('تم النسخ', 'Copied') : t('نسخ الهوية', 'Copy ID')}
                 </button>
               </div>
-            </div>
+            </section>
           )}
+          </SearchResultsDialog>
         </>
       )}
 
@@ -640,19 +653,26 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
         <div className="space-y-4">
           <form onSubmit={handleAvailabilityCheck} className="space-y-4">
             <div className="grid grid-cols-1 gap-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
+              <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
+                <div className="min-w-0 space-y-1.5">
+                  <label htmlFor={`${searchId}-start`} className="text-xs font-bold text-gray-700 flex items-center gap-1">
                     <Calendar size={14} className="text-emerald-700" />
                     {t('تاريخ الوصول', 'Check-in date')}
                   </label>
                   <input
+                    id={`${searchId}-start`}
                     type="date"
-                    className="w-full rounded-xl ring-1 ring-emerald-200/70 bg-white/70 py-2 px-3 text-xs font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0"
+                    disabled={availabilityLoading}
+                    required
+                    className="min-h-11 min-w-0 w-full rounded-xl border border-stone-200 bg-white py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
                     value={startDate}
                     min={format(new Date(), 'yyyy-MM-dd')}
                     onChange={(e) => {
                       setStartDate(e.target.value);
+                      setAvailabilitySummary(null);
+                      setAvailableUnits([]);
+                      setAvailabilityError(null);
+                      if (!e.target.value) return;
                       const minEnd = format(addDays(parseISO(e.target.value), 30), 'yyyy-MM-dd');
                       if (!endDate || endDate < minEnd) {
                         setEndDate(minEnd);
@@ -660,35 +680,50 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
                     }}
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
+                <div className="min-w-0 space-y-1.5">
+                  <label htmlFor={`${searchId}-end`} className="text-xs font-bold text-gray-700 flex items-center gap-1">
                     <Calendar size={14} className="text-emerald-700" />
                     {t('تاريخ المغادرة', 'Check-out date')}
                   </label>
                   <input
+                    id={`${searchId}-end`}
                     type="date"
-                    className="w-full rounded-xl ring-1 ring-emerald-200/70 bg-white/70 py-2 px-3 text-xs font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0"
+                    disabled={availabilityLoading}
+                    required
+                    className="min-h-11 min-w-0 w-full rounded-xl border border-stone-200 bg-white py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
                     value={endDate}
                     min={
                       startDate
                         ? format(addDays(parseISO(startDate), 30), 'yyyy-MM-dd')
                         : format(addDays(new Date(), 30), 'yyyy-MM-dd')
                     }
-                    onChange={(e) => setEndDate(e.target.value)}
+                    onChange={(e) => {
+                      setEndDate(e.target.value);
+                      setAvailabilitySummary(null);
+                      setAvailableUnits([]);
+                      setAvailabilityError(null);
+                    }}
                   />
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-700 flex items-center gap-1">
+                <label htmlFor={`${searchId}-type`} className="text-xs font-bold text-gray-700 flex items-center gap-1">
                   <BedDouble size={14} className="text-emerald-700" />
                   {t('نوع الغرفة', 'Room type')}
                 </label>
                 <div className="relative">
                   <select
-                    className="w-full rounded-xl ring-1 ring-emerald-200/70 bg-white/70 py-2 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0"
+                    id={`${searchId}-type`}
+                    required
+                    className="min-h-11 w-full rounded-xl border border-stone-200 bg-white py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
                     value={selectedTypeId}
-                    onChange={(e) => setSelectedTypeId(e.target.value)}
-                    disabled={typesLoading}
+                    onChange={(e) => {
+                      setSelectedTypeId(e.target.value);
+                      setAvailabilitySummary(null);
+                      setAvailableUnits([]);
+                      setAvailabilityError(null);
+                    }}
+                    disabled={typesLoading || availabilityLoading}
                   >
                     <option value="">{t('اختر نوع الغرفة...', 'Select room type...')}</option>
                     {unitTypes.map((t) => (
@@ -706,10 +741,11 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
                 </div>
               </div>
             </div>
+            <p className="text-xs leading-5 text-stone-500">{t('الحد الأدنى للإقامة 30 يومًا. تتحدث المغادرة تلقائيًا عند تغيير الوصول.', 'Minimum stay is 30 days. Check-out adjusts automatically when check-in changes.')}</p>
             <button
               type="submit"
-              disabled={availabilityLoading}
-              className="w-full py-2.5 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              disabled={availabilityLoading || typesLoading || !selectedTypeId}
+              className="min-h-11 w-full py-2.5 rounded-xl text-sm font-bold bg-emerald-900 text-white hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
             >
               {availabilityLoading && (
                 <Loader2 size={16} className="animate-spin" />
@@ -718,6 +754,7 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
             </button>
           </form>
 
+          <SearchResultsDialog open={resultsOpen} onOpenChange={setResultsOpen} title={t('نتيجة فحص الإتاحة', 'Availability result')} loading={availabilityLoading} language={language}>
           {availabilityError && (
             <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
               <AlertCircle size={14} />
@@ -726,8 +763,8 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
           )}
 
           {availabilitySummary && (
-            <div className="space-y-3 mt-2">
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3 flex items-center justify-between">
+            <section aria-label={t('نتيجة فحص الإتاحة', 'Availability result')} className="space-y-3 [overflow-wrap:anywhere]">
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3 flex flex-col gap-4">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center">
                     <BedDouble size={18} className="text-emerald-600" />
@@ -746,9 +783,9 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="border-t border-emerald-100 pt-3">
                   <p className="text-xs text-gray-600 mb-1">{t('الأسعار الشهرية والسنوية', 'Monthly & yearly pricing')}</p>
-                  <div className="flex items-center gap-3 justify-end">
+                  <div className="grid grid-cols-1 gap-2 min-[400px]:grid-cols-2">
                     <div className="bg-white rounded-xl border border-gray-200 px-2 py-1">
                       <div className="text-[11px] text-gray-500">{t('شهري', 'Monthly')}</div>
                       <div className="text-sm font-bold text-gray-900">
@@ -775,7 +812,7 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
               {availableUnits.length > 0 && (
                 <div className="rounded-2xl border border-gray-200 bg-white p-3">
                   <div className="text-xs font-bold text-gray-700 mb-2">{t('الوحدات المتاحة', 'Available units')}</div>
-                  <div className="grid grid-cols-5 gap-2">
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2">
                     {availableUnits.map((u) => {
                       const isMaintenance = (u.status || '') === 'maintenance';
                       return (
@@ -810,10 +847,18 @@ export default function GlobalCustomerSearch({ language: languageProp }: { langu
                   )}
                 </span>
               </div>
-            </div>
+            </section>
           )}
+          </SearchResultsDialog>
         </div>
       )}
+      {compact && mode === 'customer' && <div className="mt-auto pt-5">
+        <div className="flex items-center gap-3 rounded-2xl border border-dashed border-stone-200 bg-stone-50/70 p-4">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-800 shadow-sm"><User size={19} /></div>
+          <div><p className="text-xs font-semibold text-stone-700">{t('بيانات العميل في مكان واحد', 'Customer details in one place')}</p>
+          <p className="mt-1 text-xs leading-5 text-stone-500">{t('الحجوزات، الرصيد والملاحظات تظهر في نافذة مستقلة عند البحث.', 'Bookings, balance and notes open in a separate results window.')}</p></div>
+        </div>
+      </div>}
     </div>
   );
 }

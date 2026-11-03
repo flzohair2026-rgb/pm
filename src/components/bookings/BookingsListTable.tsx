@@ -1,32 +1,26 @@
 'use client';
 
 import React from 'react';
+import { normalizeRegisterFilters, parseRegisterPage, registerUrl, type RegisterFilters, type RegisterCursor, type RegisterPage, type RegisterRow } from '@/lib/bookings/register';
 import Link from 'next/link';
-import { CalendarDays, ChevronDown, Eye, FileText, Home, Key, Printer, Search, X } from 'lucide-react';
+import { CalendarDays, ChevronDown, Eye, FileText, Home, Key, Printer, Search, X, ArrowRight, Zap } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import BookingQuickView from '@/components/bookings/BookingQuickView';
 import ConfirmBookingButton from '@/components/bookings/ConfirmBookingButton';
 import { addDays, addMonths, differenceInDays, format as formatDate, isSameDay, isSameMonth, startOfMonth, startOfWeek } from 'date-fns';
 
-type BookingRow = {
-  id: string;
-  created_at: string;
-  status: string;
-  booking_type: string | null;
-  check_in: string;
-  check_out: string;
-  total_price: number | null;
-  customer: { full_name: string | null; phone: string | null } | null;
-  unit: { unit_number: string | null; unit_type?: { name: string | null } | null } | null;
-};
-
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
+  draft: { label: 'مسودة', color: 'bg-gray-50 text-gray-700' },
+  quoted: { label: 'عرض سعر', color: 'bg-indigo-50 text-indigo-800' },
+  preliminary: { label: 'حجز أولي', color: 'bg-emerald-50 text-emerald-900 border border-emerald-200' },
   pending: { label: 'مبدئي', color: 'bg-yellow-50 text-yellow-900' },
   pending_deposit: { label: 'بانتظار العربون', color: 'bg-yellow-100 text-yellow-900' },
+  deposit_paid: { label: 'تم دفع العربون', color: 'bg-lime-100 text-lime-900' },
   confirmed: { label: 'مؤكد', color: 'bg-green-100 text-green-900' },
   checked_in: { label: 'تم الدخول', color: 'bg-blue-100 text-blue-900' },
   checked_out: { label: 'تم الخروج', color: 'bg-gray-100 text-gray-900' },
   cancelled: { label: 'ملغي', color: 'bg-red-100 text-red-900' },
+  completed: { label: 'مكتمل', color: 'bg-teal-100 text-teal-900' },
 };
 
 function DatePicker({
@@ -42,13 +36,13 @@ function DatePicker({
   const buttonRef = React.useRef<HTMLButtonElement | null>(null);
   const popoverRef = React.useRef<HTMLDivElement | null>(null);
 
-  const selectedDate = value ? new Date(`${value}T00:00:00Z`) : null;
+  const selectedDate = React.useMemo(() => value ? new Date(`${value}T12:00:00`) : null, [value]);
   const [month, setMonth] = React.useState<Date>(() => selectedDate || new Date());
 
   React.useEffect(() => {
     if (!open) return;
     setMonth(selectedDate || new Date());
-  }, [open, value]);
+  }, [open, selectedDate]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -70,12 +64,14 @@ function DatePicker({
     };
   }, [open]);
 
-  const monthStart = startOfMonth(month);
-  const gridStart = startOfWeek(monthStart, { weekStartsOn: 0 });
-  const days = Array.from({ length: 42 }).map((_, i) => addDays(gridStart, i));
+  const monthStart = React.useMemo(() => startOfMonth(month), [month]);
+  const days = React.useMemo(() => {
+    const gridStart = startOfWeek(monthStart, { weekStartsOn: 0 });
+    return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+  }, [monthStart]);
   const weekDays = ['أحد', 'اثن', 'ثلا', 'أرب', 'خمي', 'جمع', 'سبت'];
 
-  const title = month.toLocaleDateString('ar-SA', { month: 'long', year: 'numeric' });
+  const title = month.toLocaleDateString('ar-SA', { calendar: 'gregory', month: 'long', year: 'numeric' });
 
   const setValueDate = (d: Date) => {
     onChange(formatDate(d, 'yyyy-MM-dd'));
@@ -93,7 +89,7 @@ function DatePicker({
           className="w-full pr-10 pl-10 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-right"
         >
           {value ? (
-            <span className="font-bold">{selectedDate?.toLocaleDateString('ar-SA')}</span>
+            <span className="font-bold">{selectedDate?.toLocaleDateString('ar-SA', { calendar: 'gregory' })}</span>
           ) : (
             <span className="text-emerald-700">اختر التاريخ</span>
           )}
@@ -171,230 +167,142 @@ function DatePicker({
   );
 }
 
-export default function BookingsListTable({
-  selectedHotelId,
-  pageSize = 5,
-}: {
-  selectedHotelId: string;
-  pageSize?: number;
+export default function BookingsListTable({ selectedHotelId, pageSize = 5, initialFilters, initialPage, initialError }: {
+  selectedHotelId: string; pageSize?: number; initialFilters?: RegisterFilters; initialPage?: RegisterPage | null; initialError?: string | null;
 }) {
-  const [loading, setLoading] = React.useState(false);
-  const [rows, setRows] = React.useState<
-    Array<{
-      booking: BookingRow;
-      amount: number;
-      hasKey: boolean;
-      ejar: null | {
-        status: 'pending_confirmation' | 'confirmed' | 'rejected';
-        supervisor_note: string | null;
-        decided_at: string | null;
-        updated_at: string | null;
-        uploaded_at: string | null;
-        created_at: string | null;
-      };
-      hasEjarUpload: boolean;
-      hasAdditionalServices: boolean;
-    }>
-  >([]);
-  const [pageNum, setPageNum] = React.useState(1);
-  const [hasNext, setHasNext] = React.useState(false);
-  const [totalCount, setTotalCount] = React.useState<number | null>(null);
-  const [status, setStatus] = React.useState<string>('all');
-  const [type, setType] = React.useState<string>('all');
-  const [arrival, setArrival] = React.useState('');
-  const [departure, setDeparture] = React.useState('');
-  const [q, setQ] = React.useState('');
-  const [contractStatus, setContractStatus] = React.useState<string>('all');
+  const [filters, setFilters] = React.useState(() => normalizeRegisterFilters(initialFilters || {}));
+  const { status, type, arrival, departure, q, contract: contractStatus } = filters;
+  const [queryInput, setQueryInput] = React.useState(filters.q);
+  const [navigation, setNavigation] = React.useState<{ cursor: RegisterCursor | null; direction: 'next' | 'previous'; page: number }>({ cursor: null, direction: 'next', page: 1 });
+  const [snapshot, setSnapshot] = React.useState<RegisterPage | null>(initialPage || null);
+  const [error, setError] = React.useState<string | null>(initialError || null);
+  const [loading, setLoading] = React.useState(!initialPage && !initialError);
+  const [revision, setRevision] = React.useState(0);
+  const requestRef = React.useRef<AbortController | null>(null);
+  const generationRef = React.useRef(0);
+  const bootstrapRef = React.useRef(Boolean(initialPage || initialError));
+  const filterKey = JSON.stringify([selectedHotelId, pageSize, filters]);
+  const viewKey = JSON.stringify([filterKey, navigation]);
+  const [loadedKey, setLoadedKey] = React.useState(initialPage ? viewKey : '');
+  const countRef = React.useRef<{ key: string; count: number | null }>({ key: filterKey, count: initialPage?.totalCount ?? null });
+  const awaitingQuery = queryInput.trim() !== q;
+  const filtersRef = React.useRef(filters);
+  const navigationRef = React.useRef(navigation);
+  filtersRef.current = filters;
+  navigationRef.current = navigation;
+  const pageNum = navigation.page;
+  const rows: RegisterRow[] = !awaitingQuery && loadedKey === viewKey ? snapshot?.rows || [] : [];
+  const totalCount = countRef.current.key === filterKey ? countRef.current.count : null;
+  const hasNext = loadedKey === viewKey && Boolean(snapshot?.hasNext);
+  const hasPrevious = loadedKey === viewKey && Boolean(snapshot?.hasPrevious);
 
-  const nextYmd = (ymd: string) => {
-    const [yy, mm, dd] = ymd.split('-').map((x) => Number(x));
-    const d = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1));
-    d.setUTCDate(d.getUTCDate() + 1);
-    return d.toISOString().slice(0, 10);
-  };
-
-  const isBookingActiveNow = (checkInStr: string, checkOutStr: string): boolean => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const checkIn = new Date(checkInStr.split('T')[0]);
-    checkIn.setHours(0, 0, 0, 0);
-
-    const checkOut = new Date(checkOutStr.split('T')[0]);
-    checkOut.setHours(0, 0, 0, 0);
-
-    return today >= checkIn && today <= checkOut;
-  };
-
-  const load = React.useCallback(async () => {
+  const updateFilters = React.useCallback((patch: Partial<RegisterFilters>) => {
+    const next = normalizeRegisterFilters({ ...filtersRef.current, ...patch });
+    if (JSON.stringify(next) === JSON.stringify(filtersRef.current) && !navigationRef.current.cursor && navigationRef.current.page === 1) return;
+    filtersRef.current = next;
+    requestRef.current?.abort();
+    generationRef.current++;
+    setError(null);
     setLoading(true);
-    try {
-      const fromIndex = (pageNum - 1) * pageSize;
-      const toIndex = fromIndex + pageSize - 1;
-      const searchTerm = q.trim();
-
-      let customerIds: string[] = [];
-      let unitIds: string[] = [];
-      if (searchTerm) {
-        const [custRes, unitsRes] = await Promise.all([
-          supabase
-            .from('customers')
-            .select('id')
-            .or(`full_name.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%`)
-            .limit(200),
-          (() => {
-            let uq: any = supabase.from('units').select('id').ilike('unit_number', `%${searchTerm}%`).limit(200);
-            if (selectedHotelId !== 'all') uq = uq.eq('hotel_id', selectedHotelId);
-            return uq;
-          })(),
-        ]);
-        customerIds = Array.from(new Set((custRes.data || []).map((r: any) => r?.id).filter(Boolean).map((x: any) => String(x))));
-        unitIds = Array.from(new Set((unitsRes.data || []).map((r: any) => r?.id).filter(Boolean).map((x: any) => String(x))));
-      }
-
-      let query: any = supabase
-        .from('bookings')
-        .select(
-          `
-          id,
-          created_at,
-          status,
-          booking_type,
-          check_in,
-          check_out,
-          total_price,
-          hotel_id,
-          customer:customers(full_name, phone),
-          unit:units(unit_number, unit_type:unit_types(name))
-        `,
-          { count: 'exact' }
-        )
-        .order('created_at', { ascending: false });
-
-      if (selectedHotelId !== 'all') query = query.eq('hotel_id', selectedHotelId);
-      if (status !== 'all' && status !== 'active') query = query.eq('status', status);
-      if (type !== 'all') query = query.eq('booking_type', type);
-      if (arrival) query = query.gte('check_in', arrival).lt('check_in', nextYmd(arrival));
-      if (departure) query = query.gte('check_out', departure).lt('check_out', nextYmd(departure));
-
-      if (searchTerm) {
-        const parts: string[] = [];
-        if (customerIds.length > 0) parts.push(`customer_id.in.(${customerIds.join(',')})`);
-        if (unitIds.length > 0) parts.push(`unit_id.in.(${unitIds.join(',')})`);
-        if (parts.length > 0) query = query.or(parts.join(','));
-        else query = query.in('id', ['00000000-0000-0000-0000-000000000000']);
-      }
-
-      const res = await query.range(fromIndex, toIndex);
-      if (res.error) throw res.error;
-
-      let bookings = (res.data || []) as any[];
-
-      // Filter active bookings if needed
-      if (status === 'active') {
-        bookings = bookings.filter((b) => isBookingActiveNow(b.check_in, b.check_out));
-      }
-
-      const bookingIds = bookings.map((b: any) => String(b.id));
-      const nextOffset = fromIndex + pageSize;
-      setHasNext(typeof res.count === 'number' ? nextOffset < res.count : bookings.length === pageSize);
-      setTotalCount(typeof res.count === 'number' ? res.count : null);
-
-      const invoiceSumByBooking = new Map<string, { sum: number; count: number; hasAdditionalServices: boolean }>();
-      if (bookingIds.length > 0) {
-        const { data: invs } = await supabase
-          .from('invoices')
-          .select('booking_id,total_amount,status,additional_services_amount')
-          .in('booking_id', bookingIds)
-          .neq('status', 'void');
-        (invs || []).forEach((inv: any) => {
-          const bid = inv.booking_id;
-          if (!bid) return;
-          const prev = invoiceSumByBooking.get(bid) || { sum: 0, count: 0, hasAdditionalServices: false };
-          invoiceSumByBooking.set(bid, {
-            sum: prev.sum + (Number(inv.total_amount) || 0),
-            count: prev.count + 1,
-            hasAdditionalServices: prev.hasAdditionalServices || (Number(inv.additional_services_amount) || 0) > 0
-          });
-        });
-      }
-
-      const bookingsWithKeys = new Set<string>();
-      if (bookingIds.length > 0) {
-        const { data: keysData } = await supabase.from('booking_keys').select('booking_id').in('booking_id', bookingIds);
-        (keysData || []).forEach((k: any) => {
-          if (k?.booking_id) bookingsWithKeys.add(String(k.booking_id));
-        });
-      }
-
-      const ejarByBookingId = new Map<
-        string,
-        {
-          status: 'pending_confirmation' | 'confirmed' | 'rejected';
-          supervisor_note: string | null;
-          decided_at: string | null;
-          updated_at: string | null;
-          uploaded_at: string | null;
-          created_at: string | null;
-        }
-      >();
-      if (bookingIds.length > 0) {
-        const { data: ejarRows } = await supabase
-          .from('ejar_contract_uploads')
-          .select('booking_id,status,supervisor_note,decided_at,updated_at,uploaded_at,created_at')
-          .in('booking_id', bookingIds);
-        (ejarRows || []).forEach((r: any) => {
-          if (!r?.booking_id) return;
-          ejarByBookingId.set(String(r.booking_id), {
-            status: String(r.status || 'pending_confirmation') as any,
-            supervisor_note: r.supervisor_note ? String(r.supervisor_note) : null,
-            decided_at: r.decided_at ? String(r.decided_at) : null,
-            updated_at: r.updated_at ? String(r.updated_at) : null,
-            uploaded_at: r.uploaded_at ? String(r.uploaded_at) : null,
-            created_at: r.created_at ? String(r.created_at) : null,
-          });
-        });
-      }
-
-      let finalRows = bookings.map((b: any) => {
-        const invAgg = invoiceSumByBooking.get(b.id);
-        const amount = invAgg && invAgg.count > 0 ? invAgg.sum : Number(b.total_price || 0);
-        const hasEjarUpload = ejarByBookingId.has(String(b.id));
-        const hasAdditionalServices = invAgg?.hasAdditionalServices ?? false;
-        return {
-          booking: b as any,
-          amount,
-          hasKey: bookingsWithKeys.has(String(b.id)),
-          ejar: ejarByBookingId.get(String(b.id)) ?? null,
-          hasEjarUpload,
-          hasAdditionalServices
-        };
-      });
-
-      // Filter by contract status
-      if (contractStatus !== 'all') {
-        finalRows = finalRows.filter((row) => {
-          if (contractStatus === 'ejar_uploaded') return row.hasEjarUpload;
-          if (contractStatus === 'additional_services') return row.hasAdditionalServices && !row.hasEjarUpload;
-          if (contractStatus === 'none') return !row.hasEjarUpload && !row.hasAdditionalServices;
-          return true;
-        });
-      }
-
-      setRows(finalRows);
-    } catch (e: any) {
-      setRows([]);
-      setHasNext(false);
-      setTotalCount(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [arrival, departure, pageNum, pageSize, q, selectedHotelId, status, type, contractStatus]);
+    setFilters(next);
+    setNavigation({ cursor: null, direction: 'next', page: 1 });
+  }, []);
+  const setStatus = (value: string) => updateFilters({ status: value });
+  const setType = (value: string) => updateFilters({ type: value });
+  const setArrival = (value: string) => updateFilters({ arrival: value });
+  const setDeparture = (value: string) => updateFilters({ departure: value });
+  const setContractStatus = (value: string) => updateFilters({ contract: value });
 
   React.useEffect(() => {
-    load();
-  }, [load]);
+    if (queryInput.trim() === q) return;
+    requestRef.current?.abort();
+    generationRef.current++;
+    setLoading(true);
+    setError(null);
+    const timer = window.setTimeout(() => updateFilters({ q: queryInput }), 300);
+    return () => window.clearTimeout(timer);
+  }, [queryInput, q, updateFilters]);
 
+  React.useEffect(() => {
+    const url = registerUrl(filters);
+    if (window.location.pathname + window.location.search !== url) window.history.replaceState(window.history.state, '', url);
+  }, [filters]);
+  React.useEffect(() => {
+    const onBack = () => {
+      const values = Object.fromEntries(new URLSearchParams(window.location.search));
+      const next = normalizeRegisterFilters(values);
+      setQueryInput(next.q);
+      updateFilters(next);
+    };
+    window.addEventListener('popstate', onBack);
+    return () => window.removeEventListener('popstate', onBack);
+  }, [updateFilters]);
+
+  React.useEffect(() => {
+    if (bootstrapRef.current) { bootstrapRef.current = false; return; }
+    if (awaitingQuery) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const generation = ++generationRef.current;
+    let timedOut = false;
+    let active = true;
+    const current = () => active && generation === generationRef.current;
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, 15000);
+    const includeCount = countRef.current.key !== filterKey || countRef.current.count === null;
+    setLoading(true);
+    setError(null);
+    const load = async () => {
+      try {
+        const response = await Promise.race([
+          Promise.resolve(supabase.rpc('get_bookings_register_page', {
+            p_filters: { ...filters, hotel: selectedHotelId }, p_cursor: navigation.cursor,
+            p_direction: navigation.direction, p_page_size: pageSize, p_include_count: includeCount,
+          }).abortSignal(controller.signal)),
+          new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error(timedOut ? 'timeout' : 'aborted')), { once: true })),
+        ]);
+        if (!current()) return;
+        if (response.error) throw response.error;
+        const next = parseRegisterPage(response.data);
+        // Rows can disappear while another user edits the register. Recover to
+        // the first page instead of trapping navigation on an empty cursor page.
+        if (next.rows.length === 0 && navigation.cursor) {
+          countRef.current = { key: filterKey, count: null };
+          setNavigation({ cursor: null, direction: 'next', page: 1 });
+          return;
+        }
+        if (next.totalCount !== null) countRef.current = { key: filterKey, count: next.totalCount };
+        setSnapshot(next);
+        setLoadedKey(viewKey);
+      } catch {
+        if (!current() || (controller.signal.aborted && !timedOut)) return;
+        setError(timedOut ? 'استغرق تحميل النتائج وقتًا أطول من المعتاد. أعد المحاولة.' : 'تعذر تحميل نتائج الحجوزات. تحقق من الاتصال ثم أعد المحاولة.');
+      } finally {
+        window.clearTimeout(timer);
+        if (current()) setLoading(false);
+      }
+    };
+    void load();
+    return () => { active = false; window.clearTimeout(timer); controller.abort(); };
+  }, [filterKey, viewKey, awaitingQuery, revision, filters, navigation.cursor, navigation.direction, pageSize, selectedHotelId]);
+
+  const reload = () => {
+    bootstrapRef.current = false;
+    requestRef.current?.abort();
+    generationRef.current++;
+    countRef.current = { key: filterKey, count: null };
+    setLoading(true);
+    setError(null);
+    setRevision(value => value + 1);
+  };
+  const goPage = (direction: 'next' | 'previous') => {
+    const cursor = direction === 'next' ? snapshot?.nextCursor : snapshot?.previousCursor;
+    if (!cursor) return;
+    requestRef.current?.abort();
+    generationRef.current++;
+    setLoading(true);
+    setError(null);
+    setNavigation({ cursor, direction, page: Math.max(1, pageNum + (direction === 'next' ? 1 : -1)) });
+  };
   const ejarBadge = (ejar: NonNullable<(typeof rows)[number]['ejar']>) => {
     const s = ejar.status;
     const needsDoc = s === 'confirmed' && String(ejar.supervisor_note || '').trim() !== 'تم توثيق';
@@ -431,28 +339,9 @@ export default function BookingsListTable({
     return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold ${cls}`}>{label}</span>;
   };
 
-  const canPrev = pageNum > 1;
+  const canPrev = hasPrevious;
   const canNext = hasNext;
   const totalPages = typeof totalCount === 'number' ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
-  const pageButtons = React.useMemo(() => {
-    if (!totalPages) return [] as Array<{ key: string; type: 'page' | 'dots'; page?: number }>;
-    const maxButtons = 7;
-    if (totalPages <= maxButtons) {
-      return Array.from({ length: totalPages }).map((_, i) => ({ key: String(i + 1), type: 'page' as const, page: i + 1 }));
-    }
-    const items: Array<{ key: string; type: 'page' | 'dots'; page?: number }> = [];
-    const windowSize = 3;
-    const start = Math.max(2, pageNum - windowSize);
-    const end = Math.min(totalPages - 1, pageNum + windowSize);
-
-    items.push({ key: '1', type: 'page', page: 1 });
-    if (start > 2) items.push({ key: 'dots-start', type: 'dots' });
-    for (let p = start; p <= end; p++) items.push({ key: String(p), type: 'page', page: p });
-    if (end < totalPages - 1) items.push({ key: 'dots-end', type: 'dots' });
-    items.push({ key: String(totalPages), type: 'page', page: totalPages });
-    return items;
-  }, [pageNum, totalPages]);
-
   // Booking indicator component
   const BookingIndicator = ({ row }: { row: typeof rows[0] }) => {
     let color = 'bg-gray-400';
@@ -461,15 +350,15 @@ export default function BookingsListTable({
     } else if (row.hasAdditionalServices) {
       color = 'bg-red-500';
     }
-    
+
     return (
-      <div 
-        className={`w-2.5 h-2.5 rounded-full ${color} flex-shrink-0`} 
+      <div
+        className={`w-2.5 h-2.5 rounded-full ${color} flex-shrink-0`}
         title={
-          row.hasEjarUpload 
-            ? 'تم رفع العقد إلى منصة إيجار' 
-            : row.hasAdditionalServices 
-              ? 'يوجد إضافات على الفاتورة' 
+          row.hasEjarUpload
+            ? 'تم رفع العقد إلى منصة إيجار'
+            : row.hasAdditionalServices
+              ? 'يوجد إضافات على الفاتورة'
               : 'لا يوجد رفع إيجار ولا إضافات'
         }
       />
@@ -478,10 +367,13 @@ export default function BookingsListTable({
 
   return (
     <div className="space-y-3">
+      <div role="group" aria-label="تصفية حالة الحجز" className="flex flex-wrap gap-2">
+        {[['all','الكل'],['pending_deposit','بانتظار العربون'],['confirmed','مؤكد'],['checked_in','تم الدخول'],['checked_out','تم الخروج'],['cancelled','ملغي']].map(([value,label]) => <button key={value} type="button" aria-pressed={status === value} onClick={() => setStatus(value)} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${status === value ? 'border-emerald-900 bg-emerald-900 text-white' : 'border-stone-200 bg-white text-stone-600 hover:bg-stone-50'}`}>{label}</button>)}
+      </div>
       <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-visible relative z-30">
         <div className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 px-3 sm:px-4 py-2.5 flex items-center justify-between">
           <div className="text-white font-extrabold text-xs sm:text-sm">بحث وتصفية</div>
-          <div className="text-white text-[10px] sm:text-xs font-bold">تظهر النتائج مباشرة</div>
+          <button type="button" disabled={loading || awaitingQuery} onClick={reload} className="min-h-9 rounded-lg border border-white/30 px-3 text-[11px] font-semibold text-white hover:bg-white/10 disabled:opacity-60">{loading || awaitingQuery ? 'جاري التحديث…' : 'تحديث النتائج'}</button>
         </div>
         <div className="p-3 sm:p-4 bg-emerald-50">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
@@ -491,10 +383,10 @@ export default function BookingsListTable({
                 <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-700" />
                 <input
                   type="text"
-                  value={q}
+                  value={queryInput}
                   onChange={(e) => {
-                    setPageNum(1);
-                    setQ(e.target.value);
+
+                    setQueryInput(e.target.value.slice(0, 200));
                   }}
                   placeholder="اسم العميل، جوال، رقم وحدة"
                   className="w-full pr-10 pl-3 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 placeholder:text-emerald-700 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
@@ -506,7 +398,7 @@ export default function BookingsListTable({
               label="تاريخ الوصول"
               value={arrival}
               onChange={(v) => {
-                setPageNum(1);
+
                 setArrival(v);
               }}
             />
@@ -515,7 +407,7 @@ export default function BookingsListTable({
               label="تاريخ المغادرة"
               value={departure}
               onChange={(v) => {
-                setPageNum(1);
+
                 setDeparture(v);
               }}
             />
@@ -528,7 +420,7 @@ export default function BookingsListTable({
                   <select
                     value={status}
                     onChange={(e) => {
-                      setPageNum(1);
+
                       setStatus(e.target.value);
                     }}
                     className="w-full pr-3 pl-9 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none appearance-none"
@@ -551,13 +443,14 @@ export default function BookingsListTable({
                   <select
                     value={type}
                     onChange={(e) => {
-                      setPageNum(1);
+
                       setType(e.target.value);
                     }}
                     className="w-full pr-3 pl-9 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none appearance-none"
                   >
                     <option value="all">كل الأنواع</option>
                     <option value="daily">يومي</option>
+                    <option value="monthly">شهري</option>
                     <option value="yearly">سنوي</option>
                   </select>
                 </div>
@@ -571,7 +464,7 @@ export default function BookingsListTable({
                 <select
                   value={contractStatus}
                   onChange={(e) => {
-                    setPageNum(1);
+
                     setContractStatus(e.target.value);
                   }}
                   className="w-full pr-3 pl-9 py-2.5 border border-emerald-200 bg-white rounded-xl text-xs sm:text-sm text-emerald-950 focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 outline-none appearance-none"
@@ -587,7 +480,9 @@ export default function BookingsListTable({
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-emerald-300 overflow-hidden">
+      {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-800"><span>{error}</span><button type="button" onClick={reload} className="min-h-10 rounded-lg border border-red-200 bg-white px-3 font-semibold">إعادة المحاولة</button></div>}
+      <div aria-busy={loading || awaitingQuery} className="bg-white rounded-2xl shadow-sm border border-emerald-300 overflow-hidden">
+        {(loading || awaitingQuery) && <div role="status" aria-live="polite" className="flex items-center gap-2 border-b border-stone-100 p-3 text-xs text-emerald-800"><span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-800 motion-reduce:animate-none" />جاري تحميل الحجوزات…</div>}
         <div className="overflow-x-auto">
           <table className="w-full text-[9px] sm:text-sm text-right">
             <thead className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 border-b border-emerald-950 text-white font-bold">
@@ -655,7 +550,19 @@ export default function BookingsListTable({
                     <td className="px-1 sm:px-6 py-1 sm:py-4">
                       <div className="flex items-center justify-center gap-2">
                         <BookingQuickView id={b.id} />
-                        {b.status !== 'confirmed' ? <ConfirmBookingButton id={b.id} /> : null}
+                        {['preliminary', 'pending', 'pending_deposit', 'deposit_paid'].includes(b.status) ? (
+                          <Link
+                            href={`/bookings?complete_booking=${encodeURIComponent(b.id)}`}
+                            className="group flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 hover:from-emerald-800 hover:to-emerald-950 text-white rounded-lg text-[10px] sm:text-xs font-extrabold shadow-sm hover:shadow-md transition-all"
+                            title="إكمال إجراءات الحجز (الفاتورة + العقد + المحاسبة)"
+                          >
+                            <Zap size={13} className="sm:hidden group-hover:scale-110 transition-transform" />
+                            <Zap size={15} className="hidden sm:inline group-hover:scale-110 transition-transform" />
+                            <span className="hidden md:inline">إكمال الإجراءات</span>
+                            <ArrowRight size={12} className="hidden sm:inline" />
+                          </Link>
+                        ) : null}
+                        {b.status !== 'confirmed' && !['preliminary', 'pending', 'pending_deposit', 'deposit_paid'].includes(b.status) ? <ConfirmBookingButton id={b.id} onConfirmed={reload} /> : null}
                         <Link
                           href={`/print/invoice/${b.id}`}
                           target="_blank"
@@ -687,7 +594,7 @@ export default function BookingsListTable({
                   </tr>
                 );
               })}
-              {!loading && rows.length === 0 ? (
+              {!loading && !awaitingQuery && !error && rows.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-2 sm:px-6 py-10 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-sm">
                     لا توجد حجوزات مطابقة
@@ -703,36 +610,9 @@ export default function BookingsListTable({
             {typeof totalCount === 'number' ? ` من ${totalPages}` : ''}
           </div>
           <div className="flex items-center justify-between sm:justify-end gap-2">
-            <div className="flex items-center gap-1">
-              {pageButtons.length > 0 ? (
-                <div className="hidden sm:flex items-center gap-1">
-                  {pageButtons.map((item) =>
-                    item.type === 'dots' ? (
-                      <span key={item.key} className="px-2 text-white font-bold">
-                        ...
-                      </span>
-                    ) : (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => setPageNum(item.page || 1)}
-                        disabled={loading}
-                        className={`min-w-8 px-2 py-1 rounded-md text-xs font-bold border transition-colors ${
-                          item.page === pageNum
-                            ? 'bg-white text-emerald-900 border-white'
-                            : 'bg-emerald-900 text-white border-emerald-950 hover:bg-emerald-950'
-                        } ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
-                      >
-                        {item.page}
-                      </button>
-                    )
-                  )}
-                </div>
-              ) : null}
-            </div>
             <button
               type="button"
-              onClick={() => setPageNum((p) => Math.max(1, p - 1))}
+              onClick={() => goPage('previous')}
               disabled={!canPrev || loading}
               className={`px-2 py-1 sm:px-3 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-sm font-bold border transition-colors ${
                 canPrev && !loading ? 'bg-white hover:bg-emerald-50 text-emerald-900 border-white' : 'bg-emerald-900 text-white/50 border-emerald-900 cursor-not-allowed'
@@ -742,7 +622,7 @@ export default function BookingsListTable({
             </button>
             <button
               type="button"
-              onClick={() => setPageNum((p) => p + 1)}
+              onClick={() => goPage('next')}
               disabled={!canNext || loading}
               className={`px-2 py-1 sm:px-3 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-sm font-bold border transition-colors ${
                 canNext && !loading ? 'bg-white hover:bg-emerald-50 text-emerald-900 border-white' : 'bg-emerald-900 text-white/50 border-emerald-900 cursor-not-allowed'

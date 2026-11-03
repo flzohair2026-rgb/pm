@@ -365,16 +365,16 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
                       <td className="px-4 py-2 text-gray-700 font-medium" dir="ltr">{item.date}</td>
                       <td className="px-4 py-2">
                         {item.isSeason ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-600 text-[10px] font-medium border border-orange-100">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-600 text-[11px] font-medium border border-orange-100">
                             <Coins size={10} />
                             موسمي
                           </span>
                         ) : (
-                          <span className="text-gray-400 text-[10px]">افتراضي</span>
+                          <span className="text-gray-400 text-[11px]">افتراضي</span>
                         )}
                       </td>
                       <td className="px-4 py-2 text-left font-bold text-gray-900">
-                        {item.price.toLocaleString()} <span className="text-[9px] text-gray-400 font-normal">ر.س</span>
+                        {item.price.toLocaleString()} <span className="text-[11px] text-gray-400 font-normal">ر.س</span>
                       </td>
                     </tr>
                   ))}
@@ -382,7 +382,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
                 <tfoot className="bg-gray-50/50 font-bold border-t border-gray-100">
                   <tr>
                     <td colSpan={2} className="px-4 py-2 text-gray-600">المجموع الفرعي</td>
-                    <td className="px-4 py-2 text-left text-blue-600">{subtotal.toLocaleString()} <span className="text-[9px] text-gray-400 font-normal">ر.س</span></td>
+                    <td className="px-4 py-2 text-left text-blue-600">{subtotal.toLocaleString()} <span className="text-[11px] text-gray-400 font-normal">ر.س</span></td>
                   </tr>
                 </tfoot>
               </table>
@@ -614,7 +614,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
                   value={newExtraAmount}
                   onChange={e => setNewExtraAmount(e.target.value)}
                 />
-                <span className="absolute left-2.5 top-2 text-gray-400 text-[10px]">ر.س</span>
+                <span className="absolute left-2.5 top-2 text-gray-400 text-[11px]">ر.س</span>
               </div>
               <button
                 onClick={handleAddExtra}
@@ -629,7 +629,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
                 <div key={extra.id} className="flex justify-between items-center px-3 py-2 bg-gray-50/50 rounded-lg border border-gray-100 group hover:border-gray-200 transition-all">
                   <span className="font-medium text-xs text-gray-700">{extra.name}</span>
                   <div className="flex items-center gap-3">
-                    <span className="font-bold text-xs text-gray-900">{extra.amount.toLocaleString()} <span className="text-[9px] text-gray-400 font-normal">ر.س</span></span>
+                    <span className="font-bold text-xs text-gray-900">{extra.amount.toLocaleString()} <span className="text-[11px] text-gray-400 font-normal">ر.س</span></span>
                     <button 
                       onClick={() => removeExtra(extra.id)}
                       className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
@@ -758,7 +758,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
                 <span className="text-gray-400 text-xs font-medium">{t('الإجمالي النهائي', 'Final total')}</span>
                 <div className="text-right">
                   <div className="text-2xl font-bold text-white tracking-tight">{finalTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                  <span className="text-[10px] text-gray-500">{t('ريال سعودي', 'SAR')}</span>
+                  <span className="text-[11px] text-gray-500">{t('ريال سعودي', 'SAR')}</span>
                 </div>
               </div>
             </div>
@@ -774,7 +774,7 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
             </button>
             <button
               onClick={handleNext}
-              className="flex-[2] bg-blue-600 text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-md shadow-blue-200 flex items-center justify-center gap-2"
+              className="flex-[2] bg-emerald-900 text-white py-3 rounded-xl font-bold text-sm hover:bg-emerald-800 transition-colors shadow-sm flex items-center justify-center gap-2"
             >
               <span>{t('متابعة للدفع', 'Continue to payment')}</span>
               <ArrowRight size={16} className="rotate-180" />
@@ -925,3 +925,4 @@ export const PricingStep: React.FC<PricingStepProps> = ({ onNext, onBack, unitTy
     </div>
   );
 };
+

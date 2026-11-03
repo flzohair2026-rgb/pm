@@ -4,6 +4,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { RevenueChart } from '@/components/dashboard/RevenueChart';
+import RevenueReportPrint from '@/components/reports/RevenueReportPrint';
 import { 
   DollarSign, 
   Calendar, 
@@ -151,7 +152,8 @@ export default function RevenueReportPage() {
             voucher_number,
             status,
             reference_type,
-            reference_id
+            reference_id,
+            description
           )
         `)
         .in('account_id', accountIds)
@@ -379,40 +381,21 @@ export default function RevenueReportPage() {
     if (exportingExcel) return;
     setExportingExcel(true);
     try {
-      const XLSX = await import('xlsx');
-      const rows = (revenueData || []).map((item: any) => {
-        const fullVoucher = item?.journal_entries?.voucher_number || '';
-        const shortVoucher = fullVoucher.length > 7 ? fullVoucher.slice(-7) : fullVoucher;
-        
-        return {
-          التاريخ: item?.date ? new Date(item.date).toISOString().split('T')[0] : '',
-          'رقم القيد': shortVoucher,
-          الفندق: item?.hotel_name || '',
-          الوحدة: item?.unit_number || '',
-          'رمز الحساب': item?.unit_account_code || '',
-          البيان: `${item?.customer_name || '-'} : ${item?.description || item?.journal_entries?.description || '-'}`,
-          'الصندوق / الحساب': item?.account_name || '',
-          'مدين (قبض)': Number(item?.debit || 0),
-          'دائن (صرف)': Number(item?.credit || 0),
-          'الصافي': Number(item?.amount || 0),
-        };
+      const [excelModule, { populateRevenueWorkbook }] = await Promise.all([
+        import('exceljs'),
+        import('@/lib/reports/revenue-excel'),
+      ]);
+      const ExcelJS = excelModule.default || excelModule;
+      const wb = populateRevenueWorkbook(new ExcelJS.Workbook(), {
+        rows: revenueData,
+        companyName,
+        startDate,
+        endDate,
+        hotelLabel: selectedHotelId === 'all' ? 'كل الفنادق' : (revenueData[0]?.hotel_name || 'الفندق المحدد'),
+        accounting: showAccountingDetails,
       });
-
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(rows);
-      XLSX.utils.book_append_sheet(wb, ws, 'الإيرادات');
-
-      const summary = [
-        ['الشركة', companyName],
-        ['الفترة', `${startDate} إلى ${endDate}`],
-        ['عدد العمليات', revenueData.length],
-        ['إجمالي المقبوضات', totalRevenue],
-      ];
-      const ws2 = XLSX.utils.aoa_to_sheet(summary);
-      XLSX.utils.book_append_sheet(wb, ws2, 'ملخص');
-
-      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-      const blob = new Blob([buf], {
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([new Uint8Array(buf)], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
       const url = URL.createObjectURL(blob);
@@ -460,28 +443,7 @@ export default function RevenueReportPage() {
       </div>
     ) : (
     <>
-      <style>{`
-        .screen-only { display: block; }
-        .print-only { display: none; }
-        @media print {
-          .screen-only { display: none !important; }
-          .print-only { display: block !important; }
-          header, aside, nav, .sticky, .fixed, .print-hidden { display: none !important; }
-          .print-title { font-size: 18px; font-weight: 800; color: #111827; margin-bottom: 6px; }
-          .print-sub { color: #6b7280; font-size: 12px; margin-bottom: 10px; }
-          .p-table { width: 100%; border-collapse: collapse; }
-          .p-table th, .p-table td { border: 1px solid #e5e7eb; padding: 6px; text-align: right; font-size: 12px; }
-          .p-table th { background: #f9fafb; font-weight: 700; }
-          .print-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-          .print-brand { display: flex; align-items: center; gap: 10px; }
-          .print-brand img { height: 48px; width: auto; object-fit: contain; }
-          .print-summary { margin: 8px 0 12px 0; }
-          .sig-row { display: flex; gap: 40px; margin-top: 24px; }
-          .sig-box { flex: 1 1 0; }
-          .sig-label { font-size: 12px; color: #374151; margin-bottom: 28px; }
-          .sig-line { border-top: 1px solid #e5e7eb; height: 1px; }
-        }
-      `}</style>
+
     <div className="space-y-6 screen-only">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -708,8 +670,8 @@ export default function RevenueReportPage() {
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-800">
                         <div className="font-bold text-gray-900">{item.customer_name}</div>
-                        <div className="text-xs text-gray-500 truncate max-w-xs" title={item.description || item.journal_entries.description}>
-                          {item.description || item.journal_entries.description || '-'}
+                        <div className="text-xs text-gray-500 truncate max-w-xs" title={item.journal_entries?.description?.trim() || item.description}>
+                          {item.journal_entries?.description?.trim() || item.description || '-'}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600">
@@ -740,74 +702,16 @@ export default function RevenueReportPage() {
       </div>
       )}
     </div>
-    <div className="print-only">
-      <div className="print-header">
-        <div className="print-brand">
-          {companyLogo ? <img src={companyLogo} alt="Logo" /> : null}
-          <div>
-            <div className="print-title">{companyName}</div>
-            <div className="print-sub">تقرير الإيرادات (المقبوضات)</div>
-          </div>
-        </div>
-        <div>
-          <div className="print-sub">الفترة: {startDate} إلى {endDate}</div>
-        </div>
-      </div>
-      <table className="p-table print-summary">
-        <thead>
-          <tr>
-            <th>عدد العمليات</th>
-            <th>إجمالي المقبوضات</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>{revenueData.length}</td>
-            <td>{new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR' }).format(totalRevenue)}</td>
-          </tr>
-        </tbody>
-      </table>
-      <table className="p-table">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>رقم القيد</th>
-                <th>الفندق</th>
-                <th>العميل</th>
-                <th>البيان</th>
-                <th>الصندوق/الحساب</th>
-                <th>مدين (قبض)</th>
-                <th>دائن (صرف)</th>
-                <th>الصافي</th>
-              </tr>
-            </thead>
-            <tbody>
-              {revenueData.map((item) => (
-                <tr key={item.id}>
-                  <td>{new Date(item.date).toLocaleDateString('ar-SA')}</td>
-                  <td>{item.journal_entries.voucher_number || '-'}</td>
-                  <td>{item.hotel_name || '-'}</td>
-                  <td>{item.customer_name}</td>
-                  <td>{item.description || item.journal_entries.description || '-'}</td>
-                  <td>{item.account_name}</td>
-                  <td>{new Intl.NumberFormat('ar-SA').format(item.debit)}</td>
-                  <td>{new Intl.NumberFormat('ar-SA').format(item.credit)}</td>
-                  <td>{new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR' }).format(item.amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-      </table>
-      <div className="sig-row">
-        <div className="sig-box">
-          <div className="sig-label">توقيع المدير</div>
-          <div className="sig-line"></div>
-        </div>
-        <div className="sig-box">
-          <div className="sig-label">توقيع المحاسب</div>
-          <div className="sig-line"></div>
-        </div>
-      </div>
-    </div>
+    {!isManager && <RevenueReportPrint
+      companyName={companyName}
+      companyLogo={companyLogo}
+      startDate={startDate}
+      endDate={endDate}
+      hotelLabel={selectedHotelId === 'all' ? 'كل الفنادق' : (hotelTotals.find(h => h.hotel_id === selectedHotelId)?.hotel_name || revenueData[0]?.hotel_name || 'الفندق المحدد')}
+      rows={revenueData}
+      total={totalRevenue}
+      accounting={showAccountingDetails}
+    />}
     </>
     )}
     </RoleGate>

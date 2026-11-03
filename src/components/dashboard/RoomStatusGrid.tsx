@@ -2,10 +2,12 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { createPortal } from 'react-dom';
+import UnitDetailsDialog from './UnitDetailsDialog';
 import { cn } from '@/lib/utils';
-import { BedDouble, Wrench, Sparkles, User, LogOut, LogIn, AlertTriangle, Calendar, CalendarDays, CalendarCheck, MoreVertical, X, Search, MessageCircle, Copy, ExternalLink, CheckCircle2, Info, Clock, CreditCard, Zap, Wallet, Phone } from 'lucide-react';
+import { BedDouble, Wrench, Sparkles, User, LogOut, LogIn, AlertTriangle, Calendar, CalendarDays, CalendarCheck, MoreVertical, X, Search, MessageCircle, Copy, ExternalLink, CheckCircle2, Info, Clock, CreditCard, Zap, Phone } from 'lucide-react';
+import MobileRoomFilters from './MobileRoomFilters';
 import BookingRangeModal from '@/components/dashboard/BookingRangeModal';
+import QuickBookingModal from '@/components/dashboard/QuickBookingModal';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -52,53 +54,13 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
     const [reserveDate, setReserveDate] = useState('');
     const [unitsState, setUnitsState] = useState<Unit[]>(units);
     const [rangeModalUnit, setRangeModalUnit] = useState<Unit | null>(null);
+    const [quickBookingUnit, setQuickBookingUnit] = useState<Unit | null>(null);
     const router = useRouter();
 
-    const [popoverTriggerRect, setPopoverTriggerRect] = useState<DOMRect | null>(null);
-    const popoverRef = useRef<HTMLDivElement>(null);
     const triggerRefs = useRef<Map<string, HTMLElement>>(new Map());
-    const [mounted, setMounted] = useState(false);
-
-    useEffect(() => {
-        setMounted(true);
-        return () => setMounted(false);
-    }, []);
-
     const closeDetailsPopover = useCallback(() => {
         setDetailsOpenUnitId(null);
-        setPopoverTriggerRect(null);
     }, []);
-
-    useEffect(() => {
-        if (!detailsOpenUnitId || !popoverTriggerRect) return;
-
-        const handleDocClick = (e: MouseEvent) => {
-            const target = e.target as Node;
-            if (popoverRef.current && popoverRef.current.contains(target)) return;
-            if (triggerRefs.current.get(detailsOpenUnitId)?.contains(target)) return;
-            closeDetailsPopover();
-        };
-
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') closeDetailsPopover();
-        };
-
-        const handleScroll = () => closeDetailsPopover();
-        const handleResize = () => closeDetailsPopover();
-
-        document.addEventListener('mousedown', handleDocClick);
-        document.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('scroll', handleScroll, true);
-        window.addEventListener('resize', handleResize);
-
-        return () => {
-            document.removeEventListener('mousedown', handleDocClick);
-            document.removeEventListener('keydown', handleKeyDown);
-            window.removeEventListener('scroll', handleScroll, true);
-            window.removeEventListener('resize', handleResize);
-        };
-    }, [detailsOpenUnitId, popoverTriggerRect, closeDetailsPopover]);
-
     type MessageType = 'extension' | 'payment_due' | 'welcome' | 'checkout_today' | 'satisfaction';
 
     const WEBSITE_URL = 'https://residence.masaken-rc.com.sa/';
@@ -304,6 +266,40 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                 hoverMuted: 'text-indigo-100/90',
                 hoverBadge: 'bg-white/20 text-white ring-white/30'
             };
+            case 'preliminary': return {
+                label: t('حجز أولي (نشط)', 'Preliminary (active)'),
+                ringTone: 'ring-yellow-200 hover:ring-yellow-300',
+                borderTone: 'border-yellow-300',
+                bgSoft: 'before:from-yellow-200/50 before:to-transparent',
+                chipBg: 'bg-yellow-50',
+                chipText: 'text-yellow-800',
+                chipRing: 'ring-yellow-300',
+                progressBar: 'bg-yellow-500',
+                Icon: Zap,
+                badgeVariant: 'secondary',
+                badgeClassName: 'bg-yellow-200 text-yellow-950 ring-1 ring-yellow-400/60 font-extrabold',
+                hoverFill: 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-amber-600',
+                hoverText: 'text-yellow-950',
+                hoverMuted: 'text-yellow-900/85',
+                hoverBadge: 'bg-yellow-950/20 text-yellow-950 ring-yellow-950/30'
+            };
+            case 'future_preliminary': return {
+                label: t('حجز أولي قادم', 'Preliminary (upcoming)'),
+                ringTone: 'ring-yellow-100 hover:ring-yellow-200',
+                borderTone: 'border-yellow-200',
+                bgSoft: 'before:from-yellow-100/50 before:to-transparent',
+                chipBg: 'bg-yellow-50/80',
+                chipText: 'text-yellow-700',
+                chipRing: 'ring-yellow-200',
+                progressBar: 'bg-yellow-400',
+                Icon: Zap,
+                badgeVariant: 'outline',
+                badgeClassName: 'border-yellow-400 text-yellow-900 bg-yellow-50 font-extrabold',
+                hoverFill: 'bg-gradient-to-br from-yellow-300 via-yellow-400 to-amber-500',
+                hoverText: 'text-yellow-950',
+                hoverMuted: 'text-yellow-900/85',
+                hoverBadge: 'bg-yellow-950/15 text-yellow-950 ring-yellow-950/25'
+            };
             case 'booked': return {
                 label: t('محجوز (بعربون)', 'Booked (deposit)'),
                 ringTone: 'ring-blue-100 hover:ring-blue-200',
@@ -435,7 +431,8 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
             const s = (u.has_temp_res && u.status === 'available') ? 'reserved' : u.status;
             return s === 'occupied';
         }).length,
-        booked: unitsState.filter(u => u.status === 'booked').length,
+        booked: unitsState.filter(u => u.status === 'booked' || u.status === 'preliminary' || u.status === 'future_booked' || u.status === 'future_preliminary').length,
+        preliminary: unitsState.filter(u => u.status === 'preliminary' || u.status === 'future_preliminary').length,
         maintenance: unitsState.filter(u => {
             const s = (u.has_temp_res && u.status === 'available') ? 'reserved' : u.status;
             return ['maintenance', 'cleaning'].includes(s);
@@ -574,6 +571,24 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                 const u = rangeModalUnit;
                 if (!u) return;
                 goToNewBooking(u, checkIn, checkOut);
+            }}
+        />
+        <QuickBookingModal
+            open={Boolean(quickBookingUnit)}
+            onClose={() => setQuickBookingUnit(null)}
+            unitId={quickBookingUnit?.id}
+            unitNumber={quickBookingUnit?.unit_number}
+            unitTypeName={quickBookingUnit?.unit_type_name}
+            onSuccess={(bookingId) => {
+                setQuickBookingUnit(null);
+                try {
+                    router.refresh();
+                } catch {}
+                setTimeout(() => {
+                    if (bookingId) {
+                        router.push(`/bookings-list/${bookingId}`);
+                    }
+                }, 300);
             }}
         />
         {messageModalUnit && ( 
@@ -721,50 +736,51 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
         )}
         <div className="h-full flex flex-col">
         <Card className="bg-card/95 ring-1 ring-emerald-100/70 shadow-sm hover:ring-emerald-200/70 transition-all rounded-3xl overflow-hidden">
-            <CardHeader className="px-5 sm:px-7 pt-5 sm:pt-6 pb-3 sm:pb-4 space-y-4 sm:space-y-5">
-                <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4 xl:gap-6">
-                    <div className="space-y-1.5 min-w-0">
+            <CardHeader className="gap-2.5 space-y-0 border-b border-stone-200/80 bg-[#faf9f6] px-4 py-3 sm:px-5">
+                <div className="flex flex-col items-stretch justify-between gap-2.5 lg:flex-row lg:items-center lg:gap-5">
+                    <div className="min-w-0 space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                            <CardTitle className="text-base sm:text-lg font-bold text-foreground inline-flex items-center gap-2">
+                            <CardTitle className="inline-flex flex-wrap items-center gap-x-3 gap-y-2 text-base font-bold text-stone-900 sm:text-lg">
                                 {t('حالة الغرف', 'Room status')}
-                                <Badge variant="secondary" className="text-[10px] sm:text-xs h-6 font-extrabold bg-white ring-1 ring-emerald-200/70 text-emerald-900 inline-flex items-center gap-1 px-2.5 rounded-full">
+                                <Badge variant="secondary" className="inline-flex h-auto min-h-6 max-w-full items-center gap-1.5 whitespace-normal rounded-lg border-stone-200 bg-white px-2.5 py-1 text-[10px] font-medium leading-5 text-stone-500 sm:text-xs">
                                     <Calendar size={12} />
                                     {labelText}
                                 </Badge>
                             </CardTitle>
                         </div>
-                        <CardDescription className="text-[11px] sm:text-sm flex flex-wrap items-center gap-1.5 text-muted-foreground leading-6">
-                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
+                <CardDescription className="flex flex-wrap items-center gap-1.5 text-[11px] leading-5">
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
                                 <BedDouble size={13} />
                                 {stats.available} {t('متاح', 'available')}
                             </span>
-                            <span className="opacity-40">•</span>
-                            <span className="inline-flex items-center gap-1 font-semibold text-rose-600">
+                            <span className="hidden">•</span>
+                            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 font-semibold text-rose-700">
                                 <User size={13} />
                                 {stats.occupied} {t('مشغول', 'occupied')}
                             </span>
-                            <span className="opacity-40">•</span>
-                            <span className="inline-flex items-center gap-1 font-semibold text-blue-600">
+                            <span className="hidden">•</span>
+                            <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-semibold text-blue-700">
                                 <CalendarCheck size={13} />
                                 {stats.booked} {t('محجوز', 'booked')}
                             </span>
-                            <span className="opacity-40">•</span>
-                            <span className="inline-flex items-center gap-1 font-semibold text-amber-600">
+                            <span className="hidden">•</span>
+                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
                                 <Wrench size={13} />
                                 {stats.maintenance} {t('غير جاهز', 'not ready')}
                             </span>
                         </CardDescription>
+
                     </div>
 
                     {/* Search Bar */}
-                    <div className="relative w-full xl:max-w-md shrink-0">
+                    <div className="relative w-full shrink-0 lg:w-72 xl:w-80">
                         <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-700/70" size={16} />
                         <input
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder={t('بحث باسم العميل، الجوال، أو رقم الغرفة...', 'Search guest, phone or room...')}
-                            className="w-full pr-10 pl-4 py-2.5 bg-muted/60 border border-border/60 rounded-2xl text-[13px] focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/40 focus:bg-background transition-all placeholder:text-muted-foreground/70"
+                            className="min-h-11 w-full rounded-xl border border-stone-200 bg-white py-2.5 pl-10 pr-10 text-[13px] text-stone-800 transition-colors placeholder:text-stone-400 focus:border-emerald-600/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
                         />
                         {searchQuery && (
                             <Button
@@ -780,25 +796,47 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                     </div>
                 </div>
 
-                <Separator className="opacity-60" />
 
+
+                <MobileRoomFilters
+                    value={filter}
+                    onChange={(value) => setFilter(value as typeof filter)}
+                    label={t('الفلاتر', 'Filters')}
+                    options={[
+                        { value: 'all', label: t('الكل', 'All'), count: units.length, group: t('حركة الغرف', 'Room activity'), tone: 'stone' },
+                        { value: 'available', label: t('متاح', 'Available'), count: availableUnits.length, group: t('حركة الغرف', 'Room activity'), tone: 'emerald' },
+                        { value: 'overdue', label: t('تجاوز الخروج', 'Overdue check-out'), count: stats.overdue, group: t('حركة الغرف', 'Room activity'), tone: 'rose' },
+                        { value: 'departure', label: t('مغادرة اليوم', 'Departures today'), count: stats.departure, group: t('حركة الغرف', 'Room activity'), tone: 'orange' },
+                        { value: 'arrival', label: t('وصول اليوم', 'Arrivals today'), count: stats.arrival, group: t('حركة الغرف', 'Room activity'), tone: 'sky' },
+                        { value: 'payment_overdue', label: t('دفعات متأخرة', 'Overdue Payments'), count: stats.payment_overdue, group: t('السداد والمتابعة', 'Payments & follow-up'), tone: 'rose' },
+                        { value: 'payment_today', label: t('مستحق اليوم', 'Due Today'), count: stats.payment_today, group: t('السداد والمتابعة', 'Payments & follow-up'), tone: 'emerald' },
+                        { value: 'payment_soon', label: t('قريب سداد', 'Due Soon'), count: stats.payment_soon, group: t('السداد والمتابعة', 'Payments & follow-up'), tone: 'amber' },
+                    ]}
+                    temporary={typeof tempResTotalCount === 'number' && onJumpTempDate
+                        ? { label: t('حجز مؤقت', 'Temp reservation'), count: tempResTotalCount, onClick: onJumpTempDate }
+                        : undefined}
+                />
+                <div className="hidden flex-wrap items-center gap-x-3 gap-y-2 border-t border-stone-200/80 pt-2.5 sm:flex">
+                <p className="sr-only">{language === "en" ? "Room activity" : "حركة الغرف"}</p>
                 {/* Filters / Tabs */}
-                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide items-center -mx-1 px-1">
-                    <Badge
-                        variant={filter === 'all' ? 'default' : 'secondary'}
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'all'}
                         onClick={() => setFilter('all')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap transition-all",
-                            filter === 'all' ? 'shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
+                            filter === 'all' ? 'bg-emerald-900 text-white border-emerald-900 shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                         )}
                     >
                         {t('الكل', 'All')} ({units.length})
-                    </Badge>
-                    <Badge
-                        variant={filter === 'available' ? 'default' : 'secondary'}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'available'}
                         onClick={() => setFilter('available')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
                             filter === 'available' ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' : 'text-muted-foreground hover:text-emerald-700 hover:bg-emerald-50'
                         )}
                     >
@@ -806,33 +844,35 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                         {t('متاح', 'Available')}
                         {availableUnits.length > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'available' ? 'bg-white text-emerald-700' : 'bg-emerald-600 text-white'
                             )}>{availableUnits.length}</span>
                         )}
-                    </Badge>
-                    <Badge
-                        variant={filter === 'overdue' ? 'destructive' : 'secondary'}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'overdue'}
                         onClick={() => setFilter('overdue')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
-                            filter === 'overdue' ? 'shadow-sm' : 'text-muted-foreground hover:text-rose-700 hover:bg-rose-50'
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
+                            filter === 'overdue' ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'text-muted-foreground hover:text-rose-700 hover:bg-rose-50'
                         )}
                     >
                         <AlertTriangle size={14} />
                         {t('تجاوز الخروج', 'Overdue check-out')}
                         {stats.overdue > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'overdue' ? 'bg-white text-rose-700' : 'bg-rose-600 text-white'
                             )}>{stats.overdue}</span>
                         )}
-                    </Badge>
-                    <Badge
-                        variant={filter === 'departure' ? 'default' : 'secondary'}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'departure'}
                         onClick={() => setFilter('departure')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
                             filter === 'departure' ? 'bg-orange-600 text-white hover:bg-orange-700 shadow-sm' : 'text-muted-foreground hover:text-orange-700 hover:bg-orange-50'
                         )}
                     >
@@ -840,16 +880,17 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                         {t('مغادرة اليوم', 'Departures today')}
                         {stats.departure > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'departure' ? 'bg-white text-orange-700' : 'bg-orange-600 text-white'
                             )}>{stats.departure}</span>
                         )}
-                    </Badge>
-                    <Badge
-                        variant={filter === 'arrival' ? 'default' : 'secondary'}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'arrival'}
                         onClick={() => setFilter('arrival')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
                             filter === 'arrival' ? 'bg-sky-600 text-white hover:bg-sky-700 shadow-sm' : 'text-muted-foreground hover:text-sky-700 hover:bg-sky-50'
                         )}
                     >
@@ -857,37 +898,41 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                         {t('وصول اليوم', 'Arrivals today')}
                         {stats.arrival > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'arrival' ? 'bg-white text-sky-700' : 'bg-sky-600 text-white'
                             )}>{stats.arrival}</span>
                         )}
-                    </Badge>
+                    </button>
 
-                    <div className="w-px self-stretch my-1 mx-1 bg-border/60" aria-hidden />
+                </div>
+                <p className="sr-only">{language === "en" ? "Payments & follow-up" : "السداد والمتابعة"}</p>
+                <div className="flex flex-wrap items-center gap-1.5 border-s border-stone-200 ps-3">
 
                     {/* Payment Filters */}
-                    <Badge
-                        variant={filter === 'payment_overdue' ? 'destructive' : 'secondary'}
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'payment_overdue'}
                         onClick={() => setFilter('payment_overdue')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
-                            filter === 'payment_overdue' ? 'shadow-sm' : 'text-muted-foreground hover:text-rose-700 hover:bg-rose-50'
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
+                            filter === 'payment_overdue' ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'text-muted-foreground hover:text-rose-700 hover:bg-rose-50'
                         )}
                     >
                         <AlertTriangle size={14} />
                         {t('دفعات متأخرة', 'Overdue Payments')}
                         {stats.payment_overdue > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'payment_overdue' ? 'bg-white text-rose-700' : 'bg-rose-600 text-white'
                             )}>{stats.payment_overdue}</span>
                         )}
-                    </Badge>
-                    <Badge
-                        variant={filter === 'payment_today' ? 'default' : 'secondary'}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'payment_today'}
                         onClick={() => setFilter('payment_today')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
                             filter === 'payment_today' ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' : 'text-muted-foreground hover:text-emerald-700 hover:bg-emerald-50'
                         )}
                     >
@@ -895,16 +940,17 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                         {t('مستحق اليوم', 'Due Today')}
                         {stats.payment_today > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'payment_today' ? 'bg-white text-emerald-700' : 'bg-emerald-600 text-white'
                             )}>{stats.payment_today}</span>
                         )}
-                    </Badge>
-                    <Badge
-                        variant={filter === 'payment_soon' ? 'default' : 'secondary'}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed={filter === 'payment_soon'}
                         onClick={() => setFilter('payment_soon')}
                         className={cn(
-                            "text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 transition-all",
+                            "min-h-10 sm:min-h-8 rounded-lg border border-stone-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700",
                             filter === 'payment_soon' ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-sm' : 'text-muted-foreground hover:text-amber-700 hover:bg-amber-50'
                         )}
                     >
@@ -912,26 +958,26 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                         {t('قريب سداد', 'Due Soon')}
                         {stats.payment_soon > 0 && (
                             <span className={cn(
-                                "text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold",
+                                "text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums",
                                 filter === 'payment_soon' ? 'bg-white text-amber-700' : 'bg-amber-600 text-white'
                             )}>{stats.payment_soon}</span>
                         )}
-                    </Badge>
+                    </button>
                     {typeof tempResTotalCount === 'number' && onJumpTempDate && (
-                        <Badge
-                            variant="secondary"
+                        <button type="button"
                             onClick={onJumpTempDate}
-                            className="mr-auto text-[12px] sm:text-[13px] h-8 px-3 cursor-pointer select-none whitespace-nowrap inline-flex items-center gap-1.5 bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 hover:bg-amber-200/80"
+                            className="min-h-10 sm:min-h-8 rounded-lg border border-amber-200 px-2.5 py-1 text-start text-[11px] font-semibold cursor-pointer select-none inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 transition-colors hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
                             title={t('التنقل بين تواريخ الحجوزات المؤقتة', 'Jump between temporary reservation dates')}
                         >
                             {t('حجز مؤقت', 'Temp reservation')}
-                            <span className="text-[10px] h-5 min-w-[20px] rounded-full px-1.5 inline-flex items-center justify-center font-bold bg-amber-600 text-white">{tempResTotalCount}</span>
-                        </Badge>
+                            <span className="text-[10px] h-5 min-w-5 rounded-md px-1 inline-flex items-center justify-center font-bold tabular-nums bg-amber-600 text-white">{tempResTotalCount}</span>
+                        </button>
                     )}
+                </div>
                 </div>
             </CardHeader>
 
-            <CardContent className="px-5 sm:px-7 pb-5 sm:pb-7">
+            <CardContent className="px-2 sm:px-7 pb-5 sm:pb-7">
             {filter === 'departure' && departureUnits.length > 0 && (
                 <div className="mb-5 rounded-2xl border border-orange-200 bg-orange-50/60 p-3 sm:p-4">
                     <div className="text-xs sm:text-[13px] font-bold text-orange-800 mb-2.5 inline-flex items-center gap-1.5">
@@ -974,7 +1020,7 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                     </p>
                  </div>
             ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-4 content-start pt-4 overflow-visible">
+                    <div className="grid min-w-0 grid-cols-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-x-2 gap-y-3 sm:gap-4 content-start pt-4 overflow-visible">
                     {filteredUnits.map((unit) => {
                         const effectiveStatus = (unit.has_temp_res && unit.status === 'available') ? 'reserved' : unit.status;
                         const meta = getStatusMeta(effectiveStatus);
@@ -1015,8 +1061,8 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                             return Math.max(0, Math.min(100, Math.round(p)));
                         })();
 
-                        const isUpcoming = unit.status === 'future_booked';
-                        const isCurrent = unit.status === 'occupied' || unit.status === 'booked';
+                        const isUpcoming = unit.status === 'future_booked' || unit.status === 'future_preliminary';
+                        const isCurrent = unit.status === 'occupied' || unit.status === 'booked' || unit.status === 'preliminary';
                         const isPastCheckedOut = unit.payment_booking_status === 'checked_out' && unit.status === 'available';
                         void isPastCheckedOut;
 
@@ -1038,12 +1084,24 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                         return (
                             <Card
                                 key={unit.id}
+                                role="button"
+                                tabIndex={0}
+                                aria-haspopup="dialog"
+                                aria-expanded={detailsOpenUnitId === unit.id}
+                                aria-label={`${t('تفاصيل الوحدة', 'Unit details')} ${unit.unit_number}`}
+                                onKeyDown={(event) => {
+                                    if (event.target !== event.currentTarget) return;
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        setDetailsOpenUnitId(unit.id);
+                                    }
+                                }}
                                 ref={(el) => {
                                     if (el) triggerRefs.current.set(unit.id, el);
                                     else triggerRefs.current.delete(unit.id);
                                 }}
                                 className={cn(
-                                    "group relative rounded-2xl transition-all duration-200 cursor-pointer border bg-background overflow-visible select-none",
+                                    "group relative rounded-2xl transition-all duration-200 cursor-pointer border bg-background overflow-visible select-none max-sm:min-w-0 max-sm:min-h-[144px] max-sm:py-0 max-sm:gap-0",
                                     // === تجاوز الخروج: خلفية بنية غامقة فاخرة + نبض خطير ===
                                     overdueCheckout
                                         ? "bg-gradient-to-br from-[#3e2723]/98 via-[#5d4037]/95 to-[#3e2723]/98 text-white border-[#6d4c41]/90 shadow-[0_10px_35px_-10px_rgba(62,39,35,0.75)] ring-2 ring-[#795548]/80 hover:shadow-[0_14px_40px_-10px_rgba(62,39,35,0.85)] animate-[dangerPulse_2.1s_ease-in-out_infinite]"
@@ -1064,11 +1122,8 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                     // أول نقرة على البطاقة → تفتح Popover التفاصيل (الذي يحتوي كل الإجراءات الآن)
                                     // نقرة ثانية على نفس البطاقة → تغلق Popover فقط (لأن كل الإجراءات داخله الآن)
                                     const isOpen = detailsOpenUnitId === unit.id;
-                                    const cardEl = triggerRefs.current.get(unit.id);
+
                                     if (!isOpen) {
-                                        if (cardEl) {
-                                            setPopoverTriggerRect(cardEl.getBoundingClientRect());
-                                        }
                                         setDetailsOpenUnitId(unit.id);
                                     } else {
                                         closeDetailsPopover();
@@ -1271,7 +1326,7 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                 <div
                                     className={cn(
                                         // الموقع: تغطي كامل البطاقة بدون أي زيادة
-                                        "absolute inset-0 rounded-2xl z-[30]",
+                                        "absolute inset-0 rounded-2xl z-[30] max-sm:relative max-sm:inset-auto max-sm:flex-1 max-sm:overflow-hidden",
                                         // ظاهرة دائماً الآن (لم تعد في الهوفر فقط!)
                                         "opacity-100 pointer-events-none",
                                         // أنيميشن هادئ للظهور الأولي وتحويلات الهوفر
@@ -1299,12 +1354,12 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                     />
 
                                     {/* المحتوى المركزي: رقم الوحدة + الحالة + تاريخ الحجز إن وجد */}
-                                    <div className="relative z-10 w-full h-full flex flex-col items-center justify-center gap-2.5 p-3 text-center">
+                                    <div className="relative z-10 w-full h-full flex flex-col items-center justify-center gap-1 p-1.5 sm:gap-2.5 sm:p-3 text-center max-sm:min-h-[144px]">
                                         {/* 1) رقم الوحدة: بحجم ضخم جداً في المنتصف */}
                                         <div
                                             className={cn(
                                                 "font-black leading-[0.95] tracking-tight tabular-nums dir-ltr",
-                                                "text-4xl sm:text-5xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.25)]",
+                                                "max-w-full break-all text-2xl sm:text-5xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.25)]",
                                                 displayText
                                             )}
                                         >
@@ -1314,7 +1369,7 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                         {/* 2) حالة الوحدة: نص بسيط + أيقونة بدون أي بطاقة أو شارة أو إطار
                                             — لوحدات تجاوز الخروج: نص "تجاوز الخروج" مع أيقونة تحذير وليس "متاح" */}
                                         <div className={cn(
-                                            "inline-flex items-center gap-1.5 text-[12px] font-bold leading-none",
+                                            "inline-flex max-w-full items-center gap-1 text-[10px] font-bold leading-snug sm:gap-1.5 sm:text-[12px] sm:leading-none",
                                             "tracking-wide opacity-95",
                                             displayText
                                         )}>
@@ -1407,7 +1462,7 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                             return (
                                                 <div
                                                     className={cn(
-                                                        "relative inline-flex items-center select-none shrink-0 mt-0.5 mb-0.5",
+                                                        "relative inline-flex items-center select-none shrink-0 mt-0.5 mb-0.5 max-sm:scale-[0.8] max-sm:origin-center",
                                                     )}
                                                     style={{
                                                         gap: BADGE_GAP,
@@ -1499,19 +1554,19 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                             const toNum = numericDate(unit.booking_check_out);
                                             return (
                                                 <div className={cn(
-                                                    "mt-1 flex flex-col items-center gap-1 max-w-[94%]",
+                                                    "mt-0.5 sm:mt-1 flex min-w-0 flex-col items-center gap-0.5 sm:gap-1 max-w-full sm:max-w-[94%]",
                                                     displayMuted
                                                 )}>
                                                     {/* تواريخ بسيطة بأرقام فقط: من X → Y بدون أي بطاقات */}
                                                     <div
                                                         dir="ltr"
                                                         className={cn(
-                                                            "inline-flex items-center justify-center gap-2 text-[12px] font-bold leading-none tabular-nums",
+                                                            "inline-flex max-w-full flex-row items-center justify-center gap-0.5 whitespace-nowrap text-[clamp(6px,1.85vw,8px)] font-medium leading-tight tabular-nums sm:gap-2 sm:text-[12px] sm:font-bold sm:leading-none",
                                                             displayText,
                                                             "opacity-95"
                                                         )}
                                                     >
-                                                        <CalendarDays size={12.5} strokeWidth={2} className={cn("shrink-0 opacity-80", displayMuted)} />
+                                                        <CalendarDays size={12.5} strokeWidth={2} className={cn("hidden sm:block shrink-0 opacity-80", displayMuted)} />
                                                         <span>{fromNum}</span>
                                                         <span className="opacity-75 font-black">→</span>
                                                         <span>{toNum}</span>
@@ -1519,7 +1574,7 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
                                                     {/* اسم نوع الوحدة بشكل خفيف جداً تحت التواريخ */}
                                                     {unit.unit_type_name && (
                                                         <div className={cn(
-                                                            "text-[10.5px] font-bold opacity-75 truncate max-w-full",
+                                                            "text-[8px] sm:text-[10.5px] font-medium sm:font-bold leading-tight opacity-75 break-words max-w-full sm:truncate",
                                                             displayMuted
                                                         )} dir="auto">
                                                             {unit.unit_type_name}
@@ -1533,7 +1588,7 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
 
                                 {/* Card body padding + طبقة تبييض خفيفة لوحدات تجاوز الخروج لضمان وضوح النصوص */}
                                 <CardContent className={cn(
-                                    "p-3 sm:p-3.5 relative z-[1]",
+                                    "p-3 sm:p-3.5 relative z-[1] max-sm:absolute max-sm:inset-0 max-sm:overflow-hidden",
                                     // مخفي بصرياً دائماً لكن يبقى في التدفق للحفاظ على حجم وارتفاع البطاقة الأصلية
                                     "opacity-0 pointer-events-none",
                                     overdueCheckout && "bg-black/5"
@@ -1876,454 +1931,17 @@ export const RoomStatusGrid = ({ units, selectedDate, dateLabel, tempResTotalCou
             </CardContent>
         </Card>
         </div>
-        {mounted && detailsOpenUnitId && popoverTriggerRect && (() => {
+        {detailsOpenUnitId && (() => {
             const unit = unitsState.find(u => u.id === detailsOpenUnitId);
             if (!unit) return null;
-
-            const hasRemainingDays = ((unit.status === 'occupied' || unit.status === 'booked' || unit.status === 'checked_in' || unit.status === 'future_booked' || unit.status === 'reserved') && typeof unit.remaining_days === 'number' && unit.remaining_days >= 0);
-            const hasPayment = Boolean(unit.payment_due_status);
-            const actionMeta = getActionMeta(unit);
-            const hasAction = Boolean(actionMeta);
-            const hasAny = hasRemainingDays || hasPayment || hasAction;
-            const ActionIcon = actionMeta?.icon;
-            const hasBooking = Boolean(unit.booking_id);
-
-            // حساب السعر الشهري و paidRatio للقائمة المنبثقة
-            const effectiveStatus = (unit.has_temp_res && unit.status === 'available') ? 'reserved' : unit.status;
-            const meta = getStatusMeta(effectiveStatus);
-            const StatusIcon = meta.Icon;
-            const overdueCheckout = unit.next_action === 'overdue';
-            // === تجاوزات لون وعنوان وحدة تجاوز الخروج في البوبوفر أيضاً (بني غامق فاخر!) ===
-            const popoverOverdueFill = 'from-[#6d4c41] to-[#3e2723]';
-            const popoverOverdueLabel = t('تجاوز الخروج', 'Overdue check-out');
-            const PopoverOverdueIcon = AlertTriangle;
-            const popoverBadgeBg = overdueCheckout ? popoverOverdueFill : (() => {
-                switch (effectiveStatus) {
-                    case 'available': return 'from-emerald-500 to-emerald-600';
-                    case 'reserved': return 'from-indigo-500 to-indigo-600';
-                    case 'booked': return 'from-blue-500 to-blue-600';
-                    case 'future_booked': return 'from-amber-500 to-amber-600';
-                    case 'occupied': return 'from-rose-500 to-rose-600';
-                    case 'cleaning': return 'from-sky-500 to-sky-600';
-                    case 'maintenance': return 'from-zinc-600 to-zinc-700';
-                    default: return 'from-zinc-500 to-zinc-600';
-                }
-            })();
-            const PopoverDisplayIcon = overdueCheckout ? PopoverOverdueIcon : StatusIcon;
-            const PopoverDisplayLabel = overdueCheckout ? popoverOverdueLabel : meta.label;
-            const paidRatio = (() => {
-                const total = unit.payment_invoice_total;
-                const paid = unit.payment_invoice_paid;
-                if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
-                const p = typeof paid === 'number' && Number.isFinite(paid) ? (paid / total) * 100 : 0;
-                return Math.max(0, Math.min(100, Math.round(p)));
-            })();
-            const annual = unit.annual_price === null || unit.annual_price === undefined ? NaN : Number(unit.annual_price);
-            const monthly = Number.isFinite(annual) ? annual / 12 : NaN;
-            const hasMonthlyPrice = Number.isFinite(monthly) && monthly > 0;
-
-            const isRTL = language === 'ar';
-
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
-
-            // 🎯 نظام الموضع الموحد — منتصف الشاشة دائماً (Desktop + Mobile):
-            // الجوال: أصغر + هامش 16px من الجهات | المكتب: أكبر بحجم ثابت 560px
-            const isMobile = vw < 640;
-            const finalWidth = isMobile ? Math.min(vw - 32, 380) : Math.min(vw - 48, 580);
-            const maxHeightPx = Math.max(360, Math.min(isMobile ? Math.round(vh * 0.88) : Math.round(vh * 0.84), vh - 40));
-            const finalTop = Math.round((vh - maxHeightPx) / 2);
-            const finalLeft = Math.round((vw - finalWidth) / 2);
-
-            // اسم العميل (أو اسم الضيف الإجراء) — عرض بارز
-            const guestFullName = unit.guest_name || unit.action_guest_name;
-            const hasGuestInfo = Boolean(guestFullName || unit.guest_phone);
-
-            // 🧩 المحتوى المُصمم حديثًا:
-            const cardContent = (
-                <div className="relative z-[2] flex flex-col min-h-0 flex-1">
-                    {/* ✅ الهيدر العلوي: شارة الوحدة + معلومات سريعة + زر الإغلاق */}
-                    <div className="relative overflow-hidden">
-                        {/* زخرفة خلفية فاخرة للهيدر (هالات ضبابية بلون الحالة) */}
-                        <div aria-hidden className={cn("absolute -top-16 -end-14 w-56 h-56 rounded-full blur-3xl pointer-events-none opacity-30", meta.progressBar.replace('bg-', 'bg-').replace('-500', '-400').replace('-600', '-500') || 'bg-blue-400')} />
-                        <div aria-hidden className="absolute -bottom-10 -start-12 w-44 h-44 rounded-full bg-white/40 blur-3xl pointer-events-none" />
-
-                        <div className="relative flex items-center justify-between gap-3 px-5 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-4.5">
-                            <div className="flex items-center gap-3.5 min-w-0">
-                                {/* شارة الأيقونة الكبيرة للون الحالة */}
-                                <div className={cn(
-                                    "w-12 h-12 sm:w-14 sm:h-14 rounded-2xl inline-flex items-center justify-center shrink-0 shadow-[0_6px_18px_-6px_rgba(0,0,0,0.25)] ring-1",
-                                    `bg-gradient-to-br ${popoverBadgeBg} text-white ring-white/20`
-                                )}>
-                                    <PopoverDisplayIcon size={isMobile ? 20 : 24} strokeWidth={2.3} />
-                                </div>
-                                {/* رقم الوحدة + النوع + الحالة */}
-                                <div className="min-w-0 flex flex-col leading-tight">
-                                    <div className="text-[15px] sm:text-[17px] font-black text-gray-900 truncate flex items-center gap-2">
-                                        <span>{t('الوحدة', 'Unit')}</span>
-                                        <span className="tabular-nums text-[18px] sm:text-[20px]">#{unit.unit_number}</span>
-                                    </div>
-                                    {unit.unit_type_name && (
-                                        <div className="text-[11.5px] sm:text-[12px] font-bold text-gray-500 truncate mt-0.5">
-                                            {unit.unit_type_name}
-                                        </div>
-                                    )}
-                                    <div className="flex items-center gap-1.5 mt-1.5">
-                                        <span className={cn("inline-block w-2 h-2 rounded-full shrink-0", overdueCheckout ? 'bg-[#6d4c41]' : meta.progressBar)} />
-                                        <span className="text-[11px] sm:text-[11.5px] font-black text-gray-500 leading-none">{PopoverDisplayLabel}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={closeDetailsPopover}
-                                className="w-9 h-9 sm:w-10 sm:h-10 inline-flex items-center justify-center rounded-2xl text-gray-400 hover:text-gray-700 hover:bg-gray-100/80 active:scale-95 transition-all shrink-0 ring-1 ring-black/5 bg-white/70 backdrop-blur-sm"
-                                title={t('إغلاق', 'Close')}
-                            >
-                                <X size={isMobile ? 16 : 18} strokeWidth={2.3} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* ✅ قسم العميل والحجز: اسم العميل + التواريخ + معلومات إضافية */}
-                    <div className="px-5 sm:px-6 pb-4 border-b border-gray-100/90 space-y-3.5">
-                        {/* 👤 اسم العميل (بارز وواضح) */}
-                        {hasGuestInfo && (
-                            <div className="flex items-center gap-3 p-3 sm:p-3.5 rounded-2xl bg-gradient-to-br from-slate-50 to-gray-50/80 ring-1 ring-gray-100">
-                                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl inline-flex items-center justify-center shrink-0 bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-[0_4px_14px_-4px_rgba(99,102,241,0.55)] ring-1 ring-white/20">
-                                    <User size={isMobile ? 18 : 21} strokeWidth={2.2} />
-                                </div>
-                                <div className="min-w-0 flex-1 flex flex-col leading-tight">
-                                    <div className="text-[10.5px] font-black text-gray-400 uppercase tracking-[0.08em] mb-1">
-                                        {t('الضيف', 'Guest')}
-                                    </div>
-                                    {guestFullName ? (
-                                        <div className="text-[14px] sm:text-[15px] font-black text-gray-900 truncate leading-tight">
-                                            {guestFullName}
-                                        </div>
-                                    ) : (
-                                        <div className="text-[13px] font-bold text-gray-500/80 truncate leading-tight">
-                                            {t('اسم غير مسجل', 'No name registered')}
-                                        </div>
-                                    )}
-                                    {unit.guest_phone && (
-                                        <div className="mt-1 inline-flex items-center gap-1.5 text-[11.5px] font-bold text-gray-500 tabular-nums dir-ltr">
-                                            <Phone size={12} strokeWidth={2.2} className="text-emerald-500 shrink-0" />
-                                            {unit.guest_phone}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* 📅 تواريخ الحجز (Dual Grid) + المدة المتبقية + السعر */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
-                            {/* الدخول */}
-                            {unit.booking_check_in && (
-                                <div className="rounded-2xl bg-white ring-1 ring-gray-100 p-3 sm:p-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col gap-1.5">
-                                    <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-gray-400 tracking-[0.08em]">
-                                        <CalendarDays size={11} strokeWidth={2.2} className="text-sky-500 shrink-0" />
-                                        {t('تاريخ الدخول', 'Check-in')}
-                                    </div>
-                                    <div className="text-[13px] sm:text-[14px] font-black text-gray-900 tabular-nums leading-tight">
-                                        {formatDateText(unit.booking_check_in)}
-                                    </div>
-                                </div>
-                            )}
-                            {/* الخروج */}
-                            {unit.booking_check_out && (
-                                <div className="rounded-2xl bg-white ring-1 ring-gray-100 p-3 sm:p-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col gap-1.5">
-                                    <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-gray-400 tracking-[0.08em]">
-                                        <LogOut size={11} strokeWidth={2.2} className="text-orange-500 shrink-0" />
-                                        {t('تاريخ الخروج', 'Check-out')}
-                                    </div>
-                                    <div className="text-[13px] sm:text-[14px] font-black text-gray-900 tabular-nums leading-tight">
-                                        {formatDateText(unit.booking_check_out)}
-                                    </div>
-                                </div>
-                            )}
-                            {/* المدة المتبقية */}
-                            {hasRemainingDays && (
-                                <div className="rounded-2xl bg-white ring-1 ring-gray-100 p-3 sm:p-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col gap-1.5">
-                                    <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-gray-400 tracking-[0.08em]">
-                                        <Clock size={11} strokeWidth={2.2} className="text-indigo-500 shrink-0" />
-                                        {t('المتبقي', 'Remaining')}
-                                    </div>
-                                    <div className="flex items-baseline gap-1.5">
-                                        <span className={cn(
-                                            "text-[16px] sm:text-[18px] font-black tabular-nums leading-tight",
-                                            unit.remaining_days === 0 ? 'text-orange-600' :
-                                                (unit.remaining_days ?? Infinity) <= 3 ? 'text-amber-600' : 'text-indigo-600'
-                                        )}>
-                                            {unit.remaining_days}
-                                        </span>
-                                        <span className="text-[11.5px] font-bold text-gray-500">{t('يوم', 'days')}</span>
-                                    </div>
-                                </div>
-                            )}
-                            {/* السعر الشهري */}
-                            {hasMonthlyPrice && (
-                                <div className="rounded-2xl bg-white ring-1 ring-gray-100 p-3 sm:p-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col gap-1.5">
-                                    <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-gray-400 tracking-[0.08em]">
-                                        <Wallet size={11} strokeWidth={2.2} className="text-violet-500 shrink-0" />
-                                        {t('السعر الشهري', 'Monthly')}
-                                    </div>
-                                    <div className="text-[13px] sm:text-[14px] font-black text-gray-900 tabular-nums leading-tight">
-                                        {Math.round(monthly).toLocaleString(language === 'en' ? 'en-US' : 'ar-SA')} {t('ر.س', 'SAR')}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* نسبة السداد (شريط تقدم) — إن وجدت */}
-                        {typeof paidRatio === 'number' && (
-                            <div className="rounded-2xl bg-gradient-to-br from-emerald-50/80 to-teal-50/50 ring-1 ring-emerald-100/80 p-3.5 sm:p-4">
-                                <div className="flex items-center justify-between gap-2 mb-2">
-                                    <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-emerald-800">
-                                        <CheckCircle2 size={12.5} strokeWidth={2.3} />
-                                        {t('نسبة السداد', 'Paid progress')}
-                                    </span>
-                                    <span className={cn(
-                                        "text-[12.5px] sm:text-[13px] font-black tabular-nums leading-none",
-                                        paidRatio >= 100 ? 'text-emerald-600' : 'text-emerald-700'
-                                    )}>{paidRatio}%</span>
-                                </div>
-                                <Progress
-                                    value={paidRatio}
-                                    className={cn(
-                                        "h-2.5 rounded-full bg-emerald-100/80 [&>div]:rounded-full transition-all duration-500",
-                                        paidRatio >= 100 ? '[&>div]:!bg-emerald-500' : `[&>div]:!${meta.progressBar}`
-                                    )}
-                                />
-                            </div>
-                        )}
-                    </div>
-
-                    {/* ✅ قسم التنبيهات القابلة للتمرير */}
-                    <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 sm:py-4.5 space-y-2.5 sm:space-y-3 custom-scrollbar bg-gradient-to-b from-gray-50/40 via-white to-white">
-                        {!hasAny ? (
-                            <div className="py-4 flex items-center gap-3 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50/60 ring-1 ring-emerald-100 px-4">
-                                <div className="w-10 h-10 rounded-xl bg-white shadow-sm ring-1 ring-emerald-100 inline-flex items-center justify-center shrink-0">
-                                    <CheckCircle2 size={19} className="text-emerald-600" strokeWidth={2.3} />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-[12.5px] sm:text-[13px] font-black text-emerald-900 leading-tight">
-                                        {t('لا توجد تنبيهات', 'No alerts')}
-                                    </div>
-                                    <div className="text-[11px] font-semibold text-emerald-700/85 mt-0.5 leading-snug">
-                                        {t('كل شيء بخير لهذه الوحدة حالياً', 'Everything is good for this unit.')}
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        {hasAction && ActionIcon && (
-                            <div className={cn(
-                                "group rounded-2xl ring-1 p-3.5 sm:p-4 transition-all bg-gradient-to-br",
-                                unit.next_action === 'arrival' ? 'from-sky-50 to-cyan-50/60 ring-sky-100' :
-                                unit.next_action === 'departure' ? 'from-orange-50 to-amber-50/60 ring-orange-100' :
-                                'from-[#5d4037]/10 to-[#6d4c41]/5 ring-[#8d6e63]/40 ring-2 shadow-[0_6px_22px_-8px_rgba(93,64,55,0.35)]'
-                            )}>
-                                <div className="flex items-center justify-between gap-3">
-                                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                                        <div className={cn(
-                                            "w-11 h-11 rounded-2xl inline-flex items-center justify-center shrink-0 shadow-[0_4px_14px_-4px_rgba(0,0,0,0.25)] ring-1",
-                                            unit.next_action === 'arrival' ? 'bg-gradient-to-br from-sky-500 to-cyan-500 text-white ring-sky-300/40' :
-                                            unit.next_action === 'departure' ? 'bg-gradient-to-br from-orange-500 to-amber-500 text-white ring-orange-300/40' :
-                                            'bg-gradient-to-br from-[#6d4c41] to-[#3e2723] text-[#fff8e1] ring-[#a1887f]/40'
-                                        )}>
-                                            <Zap size={19} strokeWidth={2.2} />
-                                        </div>
-                                        <div className="min-w-0 flex-1">
-                                            <div className="text-[10.5px] font-black text-gray-400 uppercase tracking-[0.08em] mb-1">{t('إجراء فوري', 'Urgent')}</div>
-                                            <div className={cn(
-                                                "text-[13px] sm:text-[14px] font-black truncate leading-tight",
-                                                unit.next_action === 'arrival' ? 'text-sky-900' :
-                                                unit.next_action === 'departure' ? 'text-orange-900' :
-                                                'text-[#3e2723]'
-                                            )}>
-                                                {actionMeta.label}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {unit.next_action === 'overdue' && (
-                                        <div className="shrink-0">
-                                            <div className="w-3 h-3 rounded-full bg-[#6d4c41] shadow-[0_0_0_5px_rgba(109,76,65,0.15)] animate-pulse" />
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {hasPayment && (() => {
-                            const txt =
-                                unit.payment_due_status === 'due_today' ? t('مستحق اليوم', 'Due today') :
-                                    unit.payment_due_status === 'due_soon' ? `${t('باقي', 'In')} ${unit.payment_due_in_days} ${t('أيام', 'days')}` :
-                                        `${t('متأخر', 'Overdue')} ${Math.abs(unit.payment_due_in_days || 0)} ${t('يوم', 'days')}`;
-                            const bgGradient =
-                                unit.payment_due_status === 'due_today'
-                                    ? 'from-orange-50 to-red-50/60 ring-orange-100'
-                                    : unit.payment_due_status === 'due_soon'
-                                        ? 'from-amber-50 to-yellow-50/60 ring-amber-100'
-                                        : 'from-rose-50 to-pink-50/60 ring-rose-100';
-                            return (
-                                <div className={cn(
-                                    "group rounded-2xl ring-1 bg-gradient-to-br p-3.5 sm:p-4 transition-all",
-                                    bgGradient,
-                                    unit.payment_due_status === 'overdue' && "ring-2 ring-rose-300/70",
-                                )}>
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                                            <div className={cn(
-                                                "w-11 h-11 rounded-2xl inline-flex items-center justify-center shrink-0 shadow-[0_4px_14px_-4px_rgba(0,0,0,0.25)] ring-1",
-                                                unit.payment_due_status === 'due_today' ? 'bg-gradient-to-br from-orange-500 to-red-500 text-white ring-orange-300/40' :
-                                                unit.payment_due_status === 'due_soon' ? 'bg-gradient-to-br from-amber-400 to-yellow-500 text-white ring-amber-300/50' :
-                                                'bg-gradient-to-br from-rose-500 to-pink-500 text-white ring-rose-300/40'
-                                            )}>
-                                                <CreditCard size={18} strokeWidth={2.2} />
-                                            </div>
-                                            <div className="min-w-0 flex-1">
-                                                <div className="text-[10.5px] font-black text-gray-400 uppercase tracking-[0.08em] mb-1">{t('الدفعات', 'Payment')}</div>
-                                                <div className={cn(
-                                                    "text-[13px] sm:text-[14px] font-black truncate leading-tight",
-                                                    unit.payment_due_status === 'due_today' ? 'text-orange-900' :
-                                                    unit.payment_due_status === 'due_soon' ? 'text-amber-900' :
-                                                    'text-rose-900'
-                                                )}>
-                                                    {txt}
-                                                </div>
-                                                {typeof unit.payment_due_amount === 'number' && unit.payment_due_amount > 0 && (
-                                                    <div className="text-[11.5px] font-black text-gray-600 mt-1 tabular-nums">
-                                                        {t('المبلغ:', 'Amount:')} {unit.payment_due_amount.toLocaleString(isRTL ? 'ar-SA' : 'en-US')} {t('ر.س', 'SAR')}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        {unit.payment_due_status === 'overdue' && (
-                                            <div className="shrink-0">
-                                                <div className="w-3 h-3 rounded-full bg-rose-500 shadow-[0_0_0_5px_rgba(244,63,94,0.15)] animate-pulse" />
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })()}
-                    </div>
-
-                    {/* ✅ قسم أزرار الإجراءات (سفلي ثابت) */}
-                    <div className="border-t border-gray-100 px-5 sm:px-6 py-4 sm:py-4.5 bg-gradient-to-br from-white via-gray-50/60 to-gray-50/40">
-                        {(() => {
-                            const u = unit;
-                            const actions: Array<{ key: string; label: string; icon?: React.ElementType; className: string; onClick: () => void; visible: boolean }> = [];
-
-                            // 1. حجز جديد (زر رئيسي)
-                            actions.push({
-                                key: 'new',
-                                label: t('حجز جديد', 'New booking'),
-                                icon: CalendarDays,
-                                visible: unit.status !== 'maintenance',
-                                className: "w-full px-4 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-black text-[12.5px] sm:text-[13px] hover:from-blue-700 hover:to-indigo-700 shadow-[0_6px_18px_-5px_rgba(37,99,235,0.55)] active:scale-[0.99] transition-all inline-flex items-center justify-center gap-2",
-                                onClick: () => {
-                                    closeDetailsPopover();
-                                    openRangeModal(u);
-                                },
-                            });
-
-                            // 2. فتح بيانات الحجز (زر ثانوي)
-                            actions.push({
-                                key: 'open',
-                                label: t('فتح بيانات الحجز', 'Open booking'),
-                                icon: ExternalLink,
-                                visible: Boolean(u.booking_id),
-                                className: "w-full px-4 py-3 sm:py-3.5 rounded-2xl bg-white border border-gray-200 text-gray-900 font-black text-[12.5px] sm:text-[13px] hover:bg-gray-50 active:scale-[0.99] transition-all inline-flex items-center justify-center gap-2 shadow-sm",
-                                onClick: () => {
-                                    const id = u.booking_id;
-                                    closeDetailsPopover();
-                                    if (id) router.push(`/bookings-list/${id}`);
-                                },
-                            });
-
-                            // 3. تواصل مع العميل (زر أخضر)
-                            const hasGuest = Boolean(u.guest_phone || u.guest_name);
-                            actions.push({
-                                key: 'msg',
-                                label: t('تواصل مع العميل', 'Contact guest'),
-                                icon: MessageCircle,
-                                visible: hasGuest,
-                                className: "w-full px-4 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-black text-[12.5px] sm:text-[13px] hover:from-emerald-600 hover:to-teal-700 active:scale-[0.99] transition-all inline-flex items-center justify-center gap-2 shadow-[0_6px_18px_-5px_rgba(16,185,129,0.55)]",
-                                onClick: () => {
-                                    closeDetailsPopover();
-                                    setMessageModalUnit(u);
-                                    setSelectedMessageType('extension');
-                                },
-                            });
-
-                            const visible = actions.filter(a => a.visible);
-                            // الشاشات الكبيرة: 3 أعمدة إن وجدت 3 أزرار، وإلا 2 أو 1
-                            const gridCols = visible.length >= 3
-                                ? 'grid-cols-1 sm:grid-cols-3'
-                                : visible.length === 2
-                                    ? 'grid-cols-1 sm:grid-cols-2'
-                                    : 'grid-cols-1';
-
-                            return (
-                                <div className={cn("grid gap-2.5 sm:gap-3", gridCols)}>
-                                    {visible.map(a => {
-                                        const Icon = a.icon;
-                                        return (
-                                            <button
-                                                key={a.key}
-                                                type="button"
-                                                onClick={a.onClick}
-                                                className={a.className}
-                                            >
-                                                {Icon && <Icon size={isMobile ? 15 : 17} strokeWidth={2.3} />}
-                                                <span className="leading-tight">{a.label}</span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            );
-                        })()}
-                    </div>
-                </div>
-            );
-
-            // ✅ عرض موحد للجميع: منتصف الشاشة دائماً مع Overlay خلفية للإغلاق عند النقر خارج الإطار
-            return createPortal(
-                <div
-                    className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 animate-[fadeIn_0.15s_ease-out]"
-                    onClick={closeDetailsPopover}
-                    style={{ direction: isRTL ? 'rtl' : 'ltr' }}
-                >
-                    {/* 🖤 الـ Overlay الخلفية — النقر عليه يغلق الـ Popover */}
-                    <div
-                        aria-hidden
-                        className="absolute inset-0 bg-black/45 backdrop-blur-[2px] sm:backdrop-blur-sm"
-                    />
-                    {/* القائمة نفسها (توقف انتشار النقر بداخلها) — Flex بالفعل يضعها في المنتصف */}
-                    <div
-                        ref={popoverRef}
-                        className="relative w-full animate-[scaleIn_0.18s_cubic-bezier(0.16,1,0.3,1)]"
-                        style={{
-                            maxWidth: finalWidth,
-                            maxHeight: maxHeightPx,
-                            transformOrigin: 'center center',
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className={cn(
-                            "relative bg-white overflow-hidden flex flex-col w-full",
-                            isMobile
-                                ? "rounded-3xl shadow-[0_30px_70px_-18px_rgba(0,0,0,0.4)] ring-1 ring-black/5 border border-gray-100/80"
-                                : "rounded-[28px] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.35)] ring-1 ring-black/5 border border-gray-100/80"
-                        )} style={{ maxHeight: maxHeightPx }}>
-                            {cardContent}
-                        </div>
-                    </div>
-                </div>,
-                document.body
-            );
+            const effectiveStatus = unit.has_temp_res && unit.status === 'available' ? 'reserved' : unit.status;
+            return <UnitDetailsDialog unit={unit} language={language} selectedDate={selectedDate}
+                statusLabel={unit.next_action === 'overdue' ? t('تجاوز الخروج', 'Overdue check-out') : getStatusMeta(effectiveStatus).label}
+                actionLabel={getActionMeta(unit)?.label}
+                onClose={closeDetailsPopover}
+                onQuickBooking={() => { closeDetailsPopover(); setQuickBookingUnit(unit); }}
+                onNewBooking={() => { closeDetailsPopover(); openRangeModal(unit); }}
+                onContact={() => { closeDetailsPopover(); setMessageModalUnit(unit); setSelectedMessageType('extension'); }} />;
         })()}
             </>
         );
@@ -2434,3 +2052,5 @@ export const ReserveModal = ({
         </div>
     );
 };
+
+

@@ -3,6 +3,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { useUserRole } from '@/hooks/useUserRole';
+import type { ArchiveProgress } from '@/lib/documents/archive-download';
 import {
   FileText,
   FileSpreadsheet,
@@ -33,6 +34,9 @@ import {
 export default function DocumentsArchivePage() {
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [archiveProgress, setArchiveProgress] = useState<ArchiveProgress | null>(null);
+  const [archiveMessage, setArchiveMessage] = useState('');
+  const archiveController = useRef<AbortController | null>(null);
 
   const [filterType, setFilterType] = useState<string>('');
   const [filterUnit, setFilterUnit] = useState<string>('');
@@ -48,29 +52,33 @@ export default function DocumentsArchivePage() {
   const listSeqRef = useRef(0);
   const today = useMemo(() => format(new Date(), 'dd/MM/yyyy', { locale: ar }), []);
 
+  const getListFilters = () => {
+    let dateFromISO: string | null = null;
+    let dateToISO: string | null = null;
+    if (filterFrom) {
+      const t = filterFromTime || '00:00';
+      dateFromISO = `${filterFrom}T${t}:00`;
+    }
+    if (filterTo) {
+      const t = filterToTime || '23:59';
+      dateToISO = `${filterTo}T${t}:59`;
+    }
+    return {
+      doc_type: filterType || null,
+      unit_number: filterUnit || null,
+      customer_name: filterCustomerName || null,
+      booking_id: filterBookingId || null,
+      date_from: dateFromISO,
+      date_to: dateToISO,
+      query: filterQuery || null
+    };
+  };
+
   const refreshList = async () => {
     const mySeq = ++listSeqRef.current;
     setLoading(true);
     try {
-      let dateFromISO: string | null = null;
-      let dateToISO: string | null = null;
-      if (filterFrom) {
-        const t = filterFromTime || '00:00';
-        dateFromISO = `${filterFrom}T${t}:00`;
-      }
-      if (filterTo) {
-        const t = filterToTime || '23:59';
-        dateToISO = `${filterTo}T${t}:59`;
-      }
-      const body = {
-        doc_type: filterType || null,
-        unit_number: filterUnit || null,
-        customer_name: filterCustomerName || null,
-        booking_id: filterBookingId || null,
-        date_from: dateFromISO,
-        date_to: dateToISO,
-        query: filterQuery || null
-      };
+      const body = getListFilters();
       const res = await fetch('/api/documents/list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,6 +93,44 @@ export default function DocumentsArchivePage() {
       if (mySeq === listSeqRef.current) setLoading(false);
     }
   };
+
+  const downloadFilteredArchive = async () => {
+    if (archiveController.current) return;
+    const controller = new AbortController();
+    archiveController.current = controller;
+    const filters = getListFilters();
+    setArchiveMessage('');
+    setArchiveProgress({ stage: 'listing', done: 0, total: 0 });
+    try {
+      const { fetchAllArchiveDocuments, buildArchiveZip } = await import('@/lib/documents/archive-download');
+      const progress = (value: ArchiveProgress) => { if (!controller.signal.aborted) setArchiveProgress(value); };
+      const documents = await fetchAllArchiveDocuments(filters, controller.signal, progress);
+      if (!documents.length) {
+        setArchiveMessage('لا توجد ملفات مطابقة للفلاتر المحددة.');
+        return;
+      }
+      const result = await buildArchiveZip(documents, controller.signal, progress);
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `أرشيف_الوثائق_${format(new Date(), 'yyyy-MM-dd')}${result.failed ? '_غير_مكتمل' : ''}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setArchiveMessage(result.failed
+        ? `تم تجهيز ${result.succeeded} ملف. تعذر تنزيل ${result.failed} ملف؛ أُرفقت أسماؤها داخل المجلد في ملف «ملفات لم يتم تنزيلها».`
+        : `تم تجهيز جميع الملفات المطابقة (${result.succeeded}) داخل مجلدات الشهور.`);
+    } catch (error) {
+      setArchiveMessage(controller.signal.aborted ? 'تم إلغاء التنزيل.' :
+        (error instanceof Error ? error.message : 'تعذر تجهيز الأرشيف. حاول مجددًا.'));
+    } finally {
+      archiveController.current = null;
+      setArchiveProgress(null);
+    }
+  };
+
+  useEffect(() => () => { archiveController.current?.abort(); }, []);
 
   const handleDelete = async (id: string) => {
     if (!id) return;
@@ -181,7 +227,15 @@ export default function DocumentsArchivePage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={downloadFilteredArchive}
+            disabled={!!archiveProgress || !role}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm font-medium hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-wait"
+          >
+            <FolderArchive className={`w-4 h-4 ${archiveProgress ? 'animate-pulse' : ''}`} />
+            {archiveProgress ? 'جارٍ تجهيز الأرشيف…' : 'تحميل المفلتر كاملًا (ZIP)'}
+          </button>
           {hasAnyFilter && (
             <button
               onClick={clearFilters}
@@ -201,6 +255,21 @@ export default function DocumentsArchivePage() {
           </button>
         </div>
       </div>
+
+      {(archiveProgress || archiveMessage) && (
+        <div role="status" aria-live="polite" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 space-y-2">
+          {archiveProgress ? <>
+            <div className="flex items-center justify-between gap-3">
+              <span>{archiveProgress.stage === 'listing'
+                ? `جارٍ جمع جميع النتائج المطابقة… ${archiveProgress.done} وثيقة`
+                : archiveProgress.stage === 'packing' ? `جارٍ تجهيز الملف المضغوط… ${archiveProgress.percent || 0}%`
+                : `جارٍ تحميل الملفات… ${archiveProgress.done} / ${archiveProgress.total}`}</span>
+              <button onClick={() => archiveController.current?.abort()} className="shrink-0 rounded-lg border border-emerald-300 px-3 py-1 hover:bg-white">إلغاء</button>
+            </div>
+            <p className="text-xs text-emerald-700">يتم تنزيل نتائج الفلاتر عند بدء العملية. تجميع الشهور والتاريخ في الأسماء حسب تاريخ الوثيقة.</p>
+          </> : archiveMessage}
+        </div>
+      )}
 
       {/* بطاقات الإحصائيات السريعة */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

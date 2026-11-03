@@ -1,158 +1,83 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, User, Menu, ChevronDown, Building2 } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronLeft, Menu, Users } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
 import NotificationsMenu from './NotificationsMenu';
 import UserMenu from './UserMenu';
+import HotelSwitcher from './HotelSwitcher';
 import Logo from '@/components/Logo';
-import { useAuthContext, HotelInfo } from '@/hooks/useAuthContext';
-import { useRouter } from 'next/navigation';
+import { useAuthContext } from '@/hooks/useAuthContext';
+import { useAppLanguage } from '@/hooks/useAppLanguage';
 
 interface HeaderProps {
   onMenuClick?: () => void;
 }
 
+const pageLabels: Record<string, [string, string]> = {
+  bookings: ['حجز جديد', 'New booking'],
+  'bookings-list': ['سجل الحجوزات', 'Bookings'],
+  customers: ['العملاء والضيوف', 'Customers & guests'],
+  units: ['إدارة الوحدات', 'Units'],
+  invoices: ['الفواتير', 'Invoices'],
+  payments: ['المدفوعات', 'Payments'],
+  reports: ['التقارير', 'Reports'],
+  accounting: ['المحاسبة', 'Accounting'],
+  settings: ['الإعدادات', 'Settings'],
+  notifications: ['التنبيهات', 'Notifications'],
+  cleaning: ['خدمة الغرف', 'Housekeeping'],
+  admin: ['إدارة النظام', 'Administration'],
+  'documents-archive': ['أرشيف المستندات', 'Document archive'],
+};
+
 export default function Header({ onMenuClick }: HeaderProps) {
-  const { role, loading: authLoading, isHousekeeping, isAdmin, hotels, activeHotelId, setActiveHotelId } = useAuthContext();
+  const { role, loading, isHousekeeping, isAdmin, hotels, activeHotelId, setActiveHotelId } = useAuthContext();
   const router = useRouter();
-  const [hotelMenuOpen, setHotelMenuOpen] = useState(false);
-  const hotelMenuRef = useRef<HTMLDivElement | null>(null);
+  const pathname = usePathname();
+  const { language } = useAppLanguage();
+  const english = language === 'en';
+  const t = (ar: string, en: string) => english ? en : ar;
+  const page = pageLabels[pathname.split('/')[1]];
+  const title = page ? page[english ? 1 : 0] : t('لوحة التحكم', 'Dashboard');
+  const hotelValue = activeHotelId || (isAdmin ? 'all' : '');
 
-  const activeHotelValue = useMemo(() => {
-    if (!activeHotelId) return isAdmin ? 'all' : '';
-    if (activeHotelId === 'all') return 'all';
-    return activeHotelId;
-  }, [activeHotelId, isAdmin]);
-
-  const activeHotelLabel = useMemo(() => {
-    if (isAdmin && activeHotelValue === 'all') return 'كل الفنادق';
-    const h = hotels.find((x: HotelInfo) => x.id === activeHotelValue);
-    return h?.name || 'اختر فرع';
-  }, [activeHotelValue, hotels, isAdmin]);
-
-  const hotelsLoading = authLoading;
-
-  useEffect(() => {
-    if (!hotelMenuOpen) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const el = hotelMenuRef.current;
-      if (!el) return;
-      if (el.contains(e.target as Node)) return;
-      setHotelMenuOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [hotelMenuOpen]);
-
-  const handleHotelChange = async (value: string) => {
-    if (!role) return;
-    if (isAdmin) {
-      setActiveHotelId(value === 'all' ? 'all' : value);
-      router.refresh();
-      return;
-    }
-    if (!value) return;
+  const handleHotelChange = (value: string) => {
+    if (!role || (!isAdmin && !value)) return;
     setActiveHotelId(value);
     router.refresh();
   };
 
   return (
-    <header className="h-16 bg-white/90 lg:bg-white/75 supports-[backdrop-filter]:backdrop-blur-md flex items-center justify-between px-4 md:px-6 sticky top-0 z-20 shadow-sm ring-1 ring-emerald-100/60">
-      <div className="flex items-center gap-3 md:gap-4 lg:w-[28rem]">
-        <Logo className="w-8 h-8 object-contain" alt="Logo" />
-        {onMenuClick && (
-          <button 
-            onClick={onMenuClick}
-            className="lg:hidden p-2 -ml-2 text-emerald-900 hover:bg-emerald-50 rounded-md"
-          >
-            <Menu size={24} />
-          </button>
-        )}
-        <div className="relative w-full hidden sm:block">
-          <Search className="absolute right-3 top-2.5 text-emerald-700" size={18} />
-          <input 
-            type="text" 
-            placeholder="بحث عن حجز، ضيف، أو فاتورة..." 
-            className="w-full pr-10 pl-4 py-2 border border-emerald-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-sans transition-all lg:py-2.5 bg-white"
-          />
+    <header dir={english ? 'ltr' : 'rtl'} className="sticky top-0 z-20 border-b border-stone-200/80 bg-white/95 supports-[backdrop-filter]:bg-white/85 supports-[backdrop-filter]:backdrop-blur-xl">
+      <div className="mx-auto flex min-h-20 w-full max-w-screen-2xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 py-3 md:px-6 xl:px-8">
+        <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
+          {onMenuClick && <button type="button" onClick={onMenuClick} aria-label={t('فتح القائمة', 'Open navigation')}
+            className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 text-stone-600 hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-emerald-700 2xl:hidden"><Menu size={20} /></button>}
+          <Link href={isHousekeeping ? '/cleaning' : '/'} aria-label={t('الصفحة الرئيسية', 'Home')}
+            className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-emerald-100 bg-emerald-50/60 transition-colors hover:bg-emerald-100/70 focus-visible:outline-2 focus-visible:outline-emerald-700">
+            <Logo className="size-8 object-contain" alt="" />
+          </Link>
+          <div className="min-w-0">
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-stone-400 sm:text-[11px]">
+              <span>{t('إدارة الضيافة', 'Hospitality management')}</span>
+              <ChevronLeft aria-hidden="true" size={11} className={english ? 'rotate-180' : ''} />
+              <span className="truncate text-emerald-800">{t('مساحة العمل', 'Workspace')}</span>
+            </div>
+            <p className="truncate text-sm font-bold tracking-tight text-stone-900 sm:text-base">{title}</p>
+          </div>
         </div>
-      </div>
 
-      <div className="flex items-center gap-4">
-        {role && (
-          <>
-            <div className="hidden md:flex items-center gap-2">
-              <div className="text-[11px] font-extrabold text-emerald-900">الفرع</div>
-              <select
-                value={activeHotelValue}
-                onChange={(e) => handleHotelChange(e.target.value)}
-                disabled={hotelsLoading || (!isAdmin && hotels.length === 0)}
-                className="h-9 px-3 rounded-lg border border-emerald-200 bg-white text-sm font-extrabold text-emerald-950 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:opacity-60"
-              >
-                {isAdmin && <option value="all">كل الفنادق</option>}
-                {!isAdmin && hotels.length === 0 ? <option value="">لا توجد صلاحية فروع</option> : null}
-                {hotels.map((h: HotelInfo) => (
-                  <option key={h.id} value={h.id}>
-                    {h.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2 md:order-last">
+          {!isHousekeeping && <Link href="/customers" title={t('العملاء والضيوف', 'Customers & guests')} aria-label={t('العملاء والضيوف', 'Customers & guests')}
+            className="hidden size-10 items-center justify-center rounded-xl border border-stone-200 text-stone-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 focus-visible:outline-2 focus-visible:outline-emerald-700 lg:flex"><Users size={18} /></Link>}
+          {!isHousekeeping && <NotificationsMenu />}
+          <span aria-hidden="true" className="mx-1 h-7 w-px bg-stone-200 sm:mx-2" />
+          <UserMenu />
+        </div>
 
-            <div className="md:hidden relative" ref={hotelMenuRef}>
-              <button
-                type="button"
-                onClick={() => setHotelMenuOpen((v) => !v)}
-                disabled={hotelsLoading || (!isAdmin && hotels.length === 0)}
-                className="h-9 px-3 rounded-lg border border-emerald-200 bg-white text-sm font-extrabold text-emerald-950 flex items-center gap-2 disabled:opacity-60"
-              >
-                <Building2 size={16} className="text-emerald-700" />
-                <span className="max-w-[10rem] truncate">{activeHotelLabel}</span>
-                <ChevronDown size={16} className="text-emerald-700" />
-              </button>
-
-              {hotelMenuOpen && (
-                <div className="absolute left-0 mt-2 w-56 max-w-[80vw] bg-white border border-emerald-100 rounded-xl shadow-lg overflow-hidden z-30 max-h-72 overflow-y-auto">
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHotelMenuOpen(false);
-                        void handleHotelChange('all');
-                      }}
-                      className={`w-full text-right px-3 py-2.5 text-[13px] font-extrabold hover:bg-emerald-50 ${
-                        activeHotelValue === 'all' ? 'bg-emerald-50 text-emerald-900' : 'text-gray-800'
-                      }`}
-                    >
-                      كل الفنادق
-                    </button>
-                  )}
-                  {!isAdmin && hotels.length === 0 ? (
-                    <div className="px-3 py-2.5 text-[13px] font-extrabold text-gray-500">لا توجد صلاحية فروع</div>
-                  ) : (
-                    hotels.map((h: HotelInfo) => (
-                      <button
-                        key={h.id}
-                        type="button"
-                        onClick={() => {
-                          setHotelMenuOpen(false);
-                          void handleHotelChange(h.id);
-                        }}
-                        className={`w-full text-right px-3 py-2.5 text-[13px] font-extrabold hover:bg-emerald-50 ${
-                          activeHotelValue === h.id ? 'bg-emerald-50 text-emerald-900' : 'text-gray-800'
-                        }`}
-                      >
-                        {h.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-        {!isHousekeeping && <NotificationsMenu />}
-        <UserMenu />
+        {role && <div className="order-last w-full md:order-none md:w-auto md:shrink-0">
+          <HotelSwitcher hotels={hotels} value={hotelValue} isAdmin={isAdmin} loading={loading} english={english} onChange={handleHotelChange} />
+        </div>}
       </div>
     </header>
   );

@@ -483,7 +483,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
 
         return (
             <div className="text-left">
-                <div className="text-2xl font-extrabold text-emerald-800">
+                <div className="text-2xl font-semibold text-emerald-800">
                     {totalPrice > 0 ? Math.round(totalPrice).toLocaleString() : '-'} <span className="text-sm font-normal text-gray-500">ريال</span>
                 </div>
                 <div className="text-xs text-gray-500">
@@ -501,7 +501,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
         const calc = calculateStayPrice(type, pricingRules, start, end);
         return (
           <div className="text-left">
-            <div className="text-2xl font-extrabold text-emerald-800">
+            <div className="text-2xl font-semibold text-emerald-800">
               {calc.totalPrice.toLocaleString()} <span className="text-sm font-normal text-gray-500">ريال</span>
             </div>
             <div className="text-xs text-gray-500">
@@ -546,7 +546,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Review Mode Summary Card */}
       {isReviewMode && (
-        <div className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 rounded-3xl p-6 md:p-8 text-white shadow-sm ring-1 ring-emerald-900/20">
+        <div className="bg-emerald-900 rounded-3xl p-6 md:p-8 text-white shadow-sm ring-1 ring-emerald-900/20">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="flex-1 space-y-4">
               <div className="flex items-center gap-3">
@@ -555,7 +555,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 </div>
                 <div>
                   <div className="text-emerald-100 text-xs font-bold uppercase tracking-wider mb-0.5">العميل المحدد</div>
-                  <h3 className="text-xl md:text-2xl font-black">{customerInfo?.full_name || '...'}</h3>
+                  <h3 className="text-xl md:text-2xl font-semibold">{customerInfo?.full_name || '...'}</h3>
                 </div>
               </div>
 
@@ -565,18 +565,18 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                     <Building2 size={14} />
                     وحدة رقم
                   </div>
-                  <div className="text-lg font-black">{selectedUnit?.unit_number || '...'}</div>
+                  <div className="text-lg font-semibold">{selectedUnit?.unit_number || '...'}</div>
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-emerald-100/80 text-xs font-bold">
                     <Calendar size={14} />
                     فترة الإقامة
                   </div>
-                  <div className="text-lg font-black">
+                  <div className="text-lg font-semibold">
                     {monthlySummary?.label || formatDuration()}
                   </div>
                   {monthlySummary?.correction && (
-                    <div className="mt-2 rounded-2xl border border-red-200/20 bg-red-500/15 px-3 py-2 text-[11px] font-black text-red-100">
+                    <div className="mt-2 rounded-2xl border border-red-200/20 bg-red-500/15 px-3 py-2 text-[11px] font-semibold text-red-100">
                       {monthlySummary.correction}
                     </div>
                   )}
@@ -634,11 +634,11 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                     )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/5">
                         <div className="space-y-1">
-                            <label className="text-[10px] text-emerald-200/70 font-bold uppercase">رقم الجوال</label>
+                            <label className="text-[11px] text-emerald-200/70 font-bold uppercase">رقم الجوال</label>
                             <div className="text-sm font-mono">{customerInfo.phone || '-'}</div>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-emerald-200/70 font-bold uppercase">تفضيلات الإقامة</label>
+                            <label className="text-[11px] text-emerald-200/70 font-bold uppercase">تفضيلات الإقامة</label>
                             <input
                                 type="text"
                                 value={customerPreferences}
@@ -656,7 +656,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
 
       {/* Standard Step Components (Hidden if Review Mode is active unless specifically toggled) */}
       {!isReviewMode && customerInfo && (
-        <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white shadow-sm overflow-hidden">
+        <div className="rounded-2xl ring-1 ring-stone-200/80 bg-stone-50/60 shadow-sm overflow-hidden">
           <button
             type="button"
             onClick={() => setCustomerDetailsOpen((v) => !v)}
@@ -669,12 +669,12 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 <User size={18} />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-extrabold text-emerald-950 truncate">{customerInfo.full_name || 'العميل'}</div>
+                <div className="text-sm font-semibold text-emerald-950 truncate">{customerInfo.full_name || 'العميل'}</div>
                 <div className="text-[11px] font-bold text-emerald-900/70 dir-ltr truncate">{customerInfo.phone || '-'}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <div className="text-[11px] font-extrabold text-emerald-900/80">تفاصيل العميل</div>
+              <div className="text-[11px] font-semibold text-emerald-900/80">تفاصيل العميل</div>
               <ChevronDown
                 size={18}
                 className={`text-emerald-800 transition-transform ${customerDetailsOpen ? 'rotate-180' : ''}`}
@@ -707,7 +707,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                     <AlertCircle className={hasNegative ? 'text-red-600' : 'text-emerald-600'} size={18} />
                     <h3 className={`font-bold ${hasNegative ? 'text-red-800' : 'text-emerald-800'}`}>{toneTitle}</h3>
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-900 text-white font-extrabold">{customerInfo.full_name || 'عميل'}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-900 text-white font-semibold">{customerInfo.full_name || 'عميل'}</span>
                 </div>
                 {noteLines.length > 0 ? (
                   <ul className="text-xs text-gray-800 list-disc pr-5 space-y-1">
@@ -730,7 +730,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                       value={customerPreferences}
                       onChange={(e) => setCustomerPreferences(e.target.value)}
                       placeholder="مثال: يفضل الأدوار العليا، سرير كبير، غرفة هادئة..."
-                      className="w-full px-3 py-2 border border-emerald-200 rounded-xl text-sm bg-white font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
+                      className="w-full px-3 py-2 border border-stone-200 rounded-xl text-sm bg-white font-semibold text-emerald-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
                     />
                   </div>
                 </div>
@@ -742,7 +742,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                       onChange={(e) => setEnableCompanions(e.target.checked)}
                       className="rounded border-emerald-300"
                     />
-                    <span className="font-extrabold text-emerald-950">إضافة مرافقين (اختياري)</span>
+                    <span className="font-semibold text-emerald-950">إضافة مرافقين (اختياري)</span>
                   </label>
                   {enableCompanions && (
                     <div className="mt-3 space-y-2">
@@ -758,7 +758,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                                 setCompanions(copy);
                               }}
                               placeholder="اسم المرافق"
-                              className="w-full px-3 py-2 border border-emerald-200 rounded-xl text-sm font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
+                              className="w-full px-3 py-2 border border-stone-200 rounded-xl text-sm font-semibold text-emerald-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
                             />
                           </div>
                           <div className="md:col-span-3">
@@ -771,7 +771,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                                 setCompanions(copy);
                               }}
                               placeholder={t('هوية/إقامة المرافق', 'Companion ID')}
-                              className="w-full px-3 py-2 border border-emerald-200 rounded-xl text-sm font-extrabold text-emerald-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
+                              className="w-full px-3 py-2 border border-stone-200 rounded-xl text-sm font-semibold text-emerald-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none"
                             />
                           </div>
                           <div className="md:col-span-1 flex justify-end">
@@ -789,7 +789,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                       <button
                         type="button"
                         onClick={() => setCompanions([...companions, { name: '', national_id: '' }])}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-200 text-sm text-emerald-950 font-extrabold hover:bg-emerald-50"
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-200 text-sm text-emerald-950 font-semibold hover:bg-emerald-50"
                       >
                         <Plus size={16} />
                         {t('إضافة مرافق', 'Add companion')}
@@ -807,9 +807,9 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
       
       {/* Date Selection (collapsible when prefilled) */}
       {!isReviewMode && (
-      <div className="space-y-4 rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-5 shadow-sm">
+      <div className="space-y-4 rounded-2xl ring-1 ring-stone-200/80 bg-stone-50/60 p-4 sm:p-5 shadow-sm">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-extrabold text-emerald-950">التواريخ</div>
+          <div className="text-sm font-semibold text-emerald-950">التواريخ</div>
           {lockedPrefill && (
             <div className="flex items-center gap-2">
               <div className="text-[11px] text-gray-600">
@@ -818,7 +818,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
               <button
                 type="button"
                 onClick={() => setShowDates((v) => !v)}
-                className="text-xs px-3 py-1.5 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-950 hover:bg-emerald-50 transition-colors font-extrabold"
+                className="text-xs px-3 py-1.5 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-950 hover:bg-emerald-50 transition-colors font-semibold"
               >
                 {showDates ? 'إخفاء' : 'إظهار'}
               </button>
@@ -837,7 +837,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 }}
                 className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
                     bookingType === 'daily' 
-                    ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm' 
+                    ? 'bg-emerald-900 text-white shadow-sm' 
                     : 'text-emerald-900 hover:text-emerald-950'
                 }`}
             >
@@ -851,7 +851,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 }}
                 className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
                     bookingType === 'monthly' 
-                    ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm' 
+                    ? 'bg-emerald-900 text-white shadow-sm' 
                     : 'text-emerald-900 hover:text-emerald-950'
                 }`}
             >
@@ -865,7 +865,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 }}
                 className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
                     bookingType === 'yearly' 
-                    ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm' 
+                    ? 'bg-emerald-900 text-white shadow-sm' 
                     : 'text-emerald-900 hover:text-emerald-950'
                 }`}
             >
@@ -874,8 +874,8 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
         </div>
 
         {bookingType === 'monthly' && (
-            <div className="flex items-center gap-3 mt-4 bg-white/70 p-2 rounded-2xl ring-1 ring-emerald-100/70 w-fit animate-in fade-in slide-in-from-top-2">
-                <span className="text-sm text-emerald-950 font-extrabold px-2">{t('عدد الأشهر:', 'Months:')}</span>
+            <div className="flex items-center gap-3 mt-4 bg-white/70 p-2 rounded-2xl ring-1 ring-stone-200/80 w-fit animate-in fade-in slide-in-from-top-2">
+                <span className="text-sm text-emerald-950 font-semibold px-2">{t('عدد الأشهر:', 'Months:')}</span>
                 <button
                     onClick={() => {
                       lastMonthlyChangeRef.current = 'months';
@@ -886,7 +886,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 >
                     <Minus size={16} />
                 </button>
-                <span className="font-extrabold text-lg w-8 text-center text-emerald-800">{durationMonths}</span>
+                <span className="font-semibold text-lg w-8 text-center text-emerald-800">{durationMonths}</span>
                 <button
                     onClick={() => {
                       lastMonthlyChangeRef.current = 'months';
@@ -899,8 +899,8 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
             </div>
         )}
         {bookingType === 'daily' && (
-            <div className="flex items-center gap-3 mt-4 bg-white/70 p-2 rounded-2xl ring-1 ring-emerald-100/70 w-fit animate-in fade-in slide-in-from-top-2">
-                <span className="text-sm text-emerald-950 font-extrabold px-2">{t('عدد الأيام:', 'Days:')}</span>
+            <div className="flex items-center gap-3 mt-4 bg-white/70 p-2 rounded-2xl ring-1 ring-stone-200/80 w-fit animate-in fade-in slide-in-from-top-2">
+                <span className="text-sm text-emerald-950 font-semibold px-2">{t('عدد الأيام:', 'Days:')}</span>
                 <button
                     onClick={() => {
                         lastDailyChangeRef.current = 'days';
@@ -911,7 +911,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 >
                     <Minus size={16} />
                 </button>
-                <span className="font-extrabold text-lg w-10 text-center text-emerald-800">{durationDays}</span>
+                <span className="font-semibold text-lg w-10 text-center text-emerald-800">{durationDays}</span>
                 <button
                     onClick={() => {
                         lastDailyChangeRef.current = 'days';
@@ -923,15 +923,15 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 </button>
             </div>
         )}
-        <div className="bg-white/70 p-5 sm:p-6 rounded-2xl ring-1 ring-emerald-100/70 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white/70 p-5 sm:p-6 rounded-2xl ring-1 ring-stone-200/80 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <label className="text-sm font-extrabold text-emerald-950 flex items-center gap-2">
+            <label className="text-sm font-semibold text-emerald-950 flex items-center gap-2">
               <Calendar size={16} className="text-emerald-700" />
               {t('تاريخ الوصول', 'Check-in')}
             </label>
             <input 
               type="date" 
-              className="w-full p-3 border border-emerald-200 rounded-xl text-emerald-950 font-extrabold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all bg-white"
+              className="w-full p-3 border border-stone-200 rounded-xl text-emerald-950 font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all bg-white"
               value={startDate}
               onChange={(e) => {
                 if (bookingType === 'daily') lastDailyChangeRef.current = 'startDate';
@@ -941,13 +941,13 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-extrabold text-emerald-950 flex items-center gap-2">
+            <label className="text-sm font-semibold text-emerald-950 flex items-center gap-2">
               <Calendar size={16} className="text-emerald-700" />
               {t('تاريخ المغادرة', 'Check-out')}
             </label>
             <input 
               type="date" 
-              className="w-full p-3 border border-emerald-200 rounded-xl text-emerald-950 font-extrabold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all bg-white disabled:opacity-70"
+              className="w-full p-3 border border-stone-200 rounded-xl text-emerald-950 font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all bg-white disabled:opacity-70"
               value={endDate}
               min={startDate ? format(addDays(parseISO(startDate), 1), 'yyyy-MM-dd') : format(addDays(new Date(), 1), 'yyyy-MM-dd')}
               onChange={(e) => {
@@ -959,7 +959,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
             />
             {bookingType === 'yearly' && (
                 <div className="mt-2 flex items-center gap-2">
-                    <label className="text-xs font-extrabold text-emerald-950 whitespace-nowrap">مدة العقد (أشهر):</label>
+                    <label className="text-xs font-semibold text-emerald-950 whitespace-nowrap">مدة العقد (أشهر):</label>
                     <input 
                         type="number" 
                         min="1" 
@@ -969,7 +969,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                           lastMonthlyChangeRef.current = 'months';
                           setDurationMonths(Math.max(1, parseInt(e.target.value) || 1));
                         }}
-                        className="w-20 p-2 text-center border border-emerald-200 rounded-xl text-sm font-extrabold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none bg-white"
+                        className="w-20 p-2 text-center border border-stone-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none bg-white"
                     />
                     <span className="text-xs text-emerald-800 font-bold">
                         * يتم تحديث تاريخ المغادرة والسعر تلقائياً
@@ -981,8 +981,8 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                 <div className="mt-2 flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                         <Info size={14} className="text-emerald-700" />
-                        <span className="text-xs font-extrabold text-emerald-900">المدة المحسوبة:</span>
-                        <span className="text-xs font-black text-emerald-800">{formatDuration()}</span>
+                        <span className="text-xs font-semibold text-emerald-900">المدة المحسوبة:</span>
+                        <span className="text-xs font-semibold text-emerald-800">{formatDuration()}</span>
                     </div>
                     {(() => {
                         const s = parseISO(startDate);
@@ -991,7 +991,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                             return (
                                 <div className="flex items-center gap-2 bg-red-50 text-red-700 px-3 py-1.5 rounded-xl border border-red-200">
                                     <AlertCircle size={14} />
-                                    <span className="text-[11px] font-black">تنبيه: تم احتساب "شهر ويوم" لتطابق يوم الخروج مع يوم الدخول</span>
+                                    <span className="text-[11px] font-semibold">تنبيه: تم احتساب "شهر ويوم" لتطابق يوم الخروج مع يوم الدخول</span>
                                 </div>
                             );
                         }
@@ -1012,45 +1012,45 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
       {!isReviewMode && (
       <>
       <div className="flex items-center justify-between mt-2">
-        <div className="text-sm font-extrabold text-emerald-950">النماذج</div>
+        <div className="text-sm font-semibold text-emerald-950">النماذج</div>
         {lockedPrefill && (
           <button
             type="button"
             onClick={() => setShowUnitTypes((v) => !v)}
-            className="text-xs px-3 py-1.5 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-950 hover:bg-emerald-50 transition-colors font-extrabold"
+            className="text-xs px-3 py-1.5 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-950 hover:bg-emerald-50 transition-colors font-semibold"
           >
             {showUnitTypes ? 'إخفاء' : 'إظهار'}
           </button>
         )}
       </div>
       {showUnitTypes && (
-      <div className="bg-gradient-to-br from-emerald-50 via-white to-white ring-1 ring-emerald-100/70 rounded-2xl p-4 shadow-sm">
+      <div className="bg-stone-50/60 ring-1 ring-stone-200/80 rounded-2xl p-4 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-100 rounded-xl text-emerald-700">
             <Building2 size={18} />
           </div>
           <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="md:col-span-2">
-              <label className="text-xs font-extrabold text-emerald-950 mb-1 block">اختر الفندق</label>
+              <label className="text-xs font-semibold text-emerald-950 mb-1 block">اختر الفندق</label>
               {isAdmin ? (
                 <select
                   value={selectedHotelId}
                   onChange={(e) => setSelectedHotelId(e.target.value)}
-                  className="w-full px-3 py-2 border border-emerald-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-white font-extrabold text-emerald-950"
+                  className="w-full px-3 py-2 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-white font-semibold text-emerald-950"
                 >
                   {hotels.map(h => (
                     <option key={h.id} value={h.id}>{h.name}</option>
                   ))}
                 </select>
               ) : (
-                <div className="w-full px-3 py-2 bg-white/70 ring-1 ring-emerald-100/70 rounded-xl text-sm font-extrabold text-emerald-950">
+                <div className="w-full px-3 py-2 bg-white/70 ring-1 ring-stone-200/80 rounded-xl text-sm font-semibold text-emerald-950">
                   {hotels.find(h => h.id === selectedHotelId)?.name || '-'}
                 </div>
               )}
             </div>
             <div>
-              <label className="text-xs font-extrabold text-emerald-950 mb-1 block">الفندق المحدد</label>
-              <div className="px-3 py-2 bg-white/70 ring-1 ring-emerald-100/70 rounded-xl text-xs text-emerald-900 font-bold">
+              <label className="text-xs font-semibold text-emerald-950 mb-1 block">الفندق المحدد</label>
+              <div className="px-3 py-2 bg-white/70 ring-1 ring-stone-200/80 rounded-xl text-xs text-emerald-900 font-bold">
                 {selectedHotelId === 'all' ? 'كل الفنادق' : (hotels.find(h => h.id === selectedHotelId)?.name || '-')}
               </div>
             </div>
@@ -1070,9 +1070,9 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
               key={type.id}
               onClick={() => setSelectedType(type)}
               className={`
-                relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 group
+                relative p-4 sm:p-5 rounded-2xl border-2 cursor-pointer transition-colors duration-200 group
                 ${isSelected 
-                  ? 'border-emerald-700 bg-emerald-50/60 shadow-sm scale-[1.02]' 
+                  ? 'border-emerald-700 bg-emerald-50/60 shadow-sm'
                   : 'border-emerald-100/70 bg-white/70 hover:border-emerald-300 hover:shadow-sm'
                 }
               `}
@@ -1120,12 +1120,12 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
               {type.features && type.features.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-100">
                   {type.features.slice(0, 3).map((feat, idx) => (
-                    <span key={idx} className="text-[10px] bg-white border border-gray-200 px-2 py-1 rounded-full text-gray-500">
+                    <span key={idx} className="text-[11px] bg-white border border-gray-200 px-2 py-1 rounded-full text-gray-500">
                       {feat}
                     </span>
                   ))}
                   {type.features.length > 3 && (
-                    <span className="text-[10px] text-gray-400 px-1 py-1">
+                    <span className="text-[11px] text-gray-400 px-1 py-1">
                       +{type.features.length - 3}
                     </span>
                   )}
@@ -1141,9 +1141,9 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
 
       {/* Available Units Selection */}
       {selectedType && !isReviewMode && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-5 shadow-sm">
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 rounded-2xl ring-1 ring-stone-200/80 bg-stone-50/60 p-4 sm:p-5 shadow-sm">
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-extrabold text-emerald-950">الوحدات المتاحة</h3>
+            <h3 className="text-xl font-semibold text-emerald-950">الوحدات المتاحة</h3>
             <span className="text-sm text-emerald-900/80 font-bold">
               ({displayedUnits.length} وحدة متاحة من نوع {selectedType.name})
             </span>
@@ -1191,25 +1191,25 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
                         {checkoutTodayMap.has(unit.id) && (
                             <div className="flex items-center gap-1.5 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.4)]" />
-                                <span className="text-[10px] font-bold text-blue-600">يخرج اليوم</span>
+                                <span className="text-[11px] font-bold text-blue-600">يخرج اليوم</span>
                             </div>
                         )}
                         {unit.status === 'cleaning' && (
                             <div className="flex items-center gap-1.5 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
                                 <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]" />
-                                <span className="text-[10px] font-bold text-amber-600">تحت التنظيف</span>
+                                <span className="text-[11px] font-bold text-amber-600">تحت التنظيف</span>
                             </div>
                         )}
                         {unit.status === 'maintenance' && (
                             <div className="flex items-center gap-1.5 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
                                 <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]" />
-                                <span className="text-[10px] font-bold text-red-600">تحت الصيانة</span>
+                                <span className="text-[11px] font-bold text-red-600">تحت الصيانة</span>
                             </div>
                         )}
                         {!checkoutTodayMap.has(unit.id) && unit.status === 'available' && (
                             <div className="flex items-center gap-1.5">
                                 <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
-                                <span className="text-[10px] font-bold text-emerald-600">متاح</span>
+                                <span className="text-[11px] font-bold text-emerald-600">متاح</span>
                             </div>
                         )}
                      </div>
@@ -1252,7 +1252,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
       <div className="flex justify-between pt-6 border-t">
         <button
           onClick={onBack}
-          className="text-emerald-950 px-6 py-3 rounded-2xl font-extrabold hover:bg-emerald-50 transition-all flex items-center gap-2 ring-1 ring-emerald-200/70 bg-white/60"
+          className="text-emerald-950 px-6 py-3 rounded-2xl font-semibold hover:bg-emerald-50 transition-all flex items-center gap-2 ring-1 ring-emerald-200/70 bg-white/60"
         >
           <ArrowRight size={20} />
           <span>{t('رجوع', 'Back')}</span>
@@ -1261,7 +1261,7 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
         <button
           onClick={handleNext}
           disabled={!selectedType || !selectedUnit || !startDate || !endDate}
-          className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white px-8 py-3 rounded-2xl font-extrabold hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-emerald-900 text-white px-8 py-3 rounded-2xl font-semibold hover:bg-emerald-800 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <span>{t('التالي: تفاصيل السعر', 'Next: Pricing details')}</span>
           <ArrowRight size={20} className="rotate-180" />
@@ -1270,3 +1270,4 @@ export const UnitSelectionStep: React.FC<UnitSelectionStepProps> = ({ onNext, on
     </div>
   );
 };
+

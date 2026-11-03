@@ -16,26 +16,28 @@ interface RevenueChartProps {
   title?: string;
   description?: string;
   language?: 'ar' | 'en';
+  fillContainer?: boolean;
 }
 
 export const RevenueChart = ({ 
   data, 
   title, 
   description,
-  language = 'ar'
+  language = 'ar',
+  fillContainer = false,
 }: RevenueChartProps) => {
   const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
   const resolvedTitle = title ?? t('إيرادات آخر 7 أيام', 'Revenue (last 7 days)');
   const resolvedDescription = description ?? t('متابعة الأداء المالي اليومي', 'Track daily financial performance');
   const currencyFormatter = new Intl.NumberFormat(language === 'en' ? 'en-US' : 'ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 0 });
   return (
-    <div className="bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all h-[340px] sm:h-[400px]">
-      <div className="mb-4 sm:mb-6">
+    <div className={fillContainer ? 'flex h-full min-w-0 flex-col rounded-2xl bg-white p-4 sm:p-6' : 'bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all h-[340px] sm:h-[400px]'}>
+      <div className={fillContainer ? 'mb-2 shrink-0 sm:mb-6' : 'mb-4 sm:mb-6'}>
         <h3 className="font-bold text-base sm:text-lg text-gray-900">{resolvedTitle}</h3>
         <p className="text-[11px] sm:text-sm text-gray-500">{resolvedDescription}</p>
       </div>
       
-      <div className="h-[260px] sm:h-[300px] w-full" dir="ltr">
+      <div className={fillContainer ? 'min-h-0 w-full flex-1' : 'h-[260px] sm:h-[300px] w-full'} dir="ltr">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>

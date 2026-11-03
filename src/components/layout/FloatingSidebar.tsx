@@ -1,264 +1,74 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import {
-  Menu, X,
-  LayoutDashboard,
-  CalendarDays,
-  BedDouble,
-  Users,
-  FileText,
-  CreditCard,
-  List as ListIcon,
-  ScrollText,
-  Wrench,
-  Brush,
-  Bell,
-  Layers,
-  Settings,
-  PieChart,
-  BookOpen,
-  Building2,
-  ArrowLeftRight,
-  UserCog,
-  History as HistoryIcon,
-  Shield as ActivityShieldIcon,
-  Languages
-} from 'lucide-react';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useEffect, useRef, useState } from 'react';
+import { Button, Dialog, Heading, Modal, ModalOverlay } from 'react-aria-components';
+import { GripVertical, Menu, X } from 'lucide-react';
+import { SidebarContent } from './Sidebar';
 import { useAppLanguage } from '@/hooks/useAppLanguage';
 
 export default function FloatingSidebar() {
   const [open, setOpen] = useState(false);
-  const { language, toggleLanguage } = useAppLanguage();
-  const router = useRouter();
-  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
-    const h = typeof window !== 'undefined' ? window.innerHeight : 800;
-    const w = typeof window !== 'undefined' ? window.innerWidth : 1200;
-    return { x: w - 80, y: h - 120 };
-  });
-  const dragging = useRef(false);
-  const offset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-  const { role, loading } = useUserRole();
-  const isAdmin = role === 'admin';
-  const isManager = role === 'manager';
-  const isReceptionist = role === 'receptionist';
-  const isHousekeeping = role === 'housekeeping';
-  const isAccountant = role === 'accountant';
-  const isMarketing = role === 'marketing';
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const gesture = useRef<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const { language } = useAppLanguage();
+  const english = language === 'en';
+  const t = (ar: string, en: string) => english ? en : ar;
 
   useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const nx = e.clientX - offset.current.x;
-      const ny = e.clientY - offset.current.y;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      const clampedX = Math.max(8, Math.min(nx, w - 72));
-      const clampedY = Math.max(8, Math.min(ny, h - 72));
-      setPos({ x: clampedX, y: clampedY });
+    const onResize = () => {
+      if (window.innerWidth >= 1536) setOpen(false);
+      setPosition(previous => previous ? {
+        x: Math.max(12, Math.min(previous.x, window.innerWidth - 124)),
+        y: Math.max(12, Math.min(previous.y, window.innerHeight - 68)),
+      } : null);
     };
-    const onUp = () => {
-      dragging.current = false;
-      document.body.style.userSelect = '';
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const onDown = (e: React.PointerEvent) => {
-    if (!btnRef.current) return;
-    dragging.current = true;
-    const rect = btnRef.current.getBoundingClientRect();
-    offset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    document.body.style.userSelect = 'none';
-  };
-
-  const openUp = typeof window !== 'undefined' ? pos.y > window.innerHeight / 2 : false;
-  const t = (ar: string, en: string) => (language === 'en' ? en : ar);
-  const onToggleLanguage = () => {
-    toggleLanguage();
-  };
-
-  return (
-    <div className="block 2xl:hidden">
-      <button
-        ref={btnRef}
-        onPointerDown={onDown}
-        onClick={() => setOpen(v => !v)}
-        style={{ left: pos.x, top: pos.y }}
-        className="fixed z-50 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-2xl flex items-center justify-center active:scale-95 transition-transform"
-        aria-label={t('القائمة', 'Menu')}
-      >
-        {open ? <X /> : <Menu />}
-      </button>
-
-      {open && (() => {
-        const ww = typeof window !== 'undefined' ? window.innerWidth : 1200;
-        const wh = typeof window !== 'undefined' ? window.innerHeight : 800;
-        const menuW = 280;
-        const menuH = Math.floor(wh * 0.7);
-        const minX = 8 + menuW / 2;
-        const maxX = ww - 8 - menuW / 2;
-        const left = Math.max(minX, Math.min(pos.x, maxX));
-
-        // Generate Tabs based on Sidebar.tsx logic
-        const tabs: { href: string; label: string; icon: any; adminOnly?: boolean; hideFromManager?: boolean }[] = [];
-
-        if (isHousekeeping) {
-          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
-        } else if (isReceptionist) {
-          tabs.push({ href: '/', label: t('لوحة التحكم', 'Dashboard'), icon: LayoutDashboard });
-          tabs.push({ href: '/invoices', label: t('الفواتير', 'Invoices'), icon: FileText });
-          tabs.push({ href: '/payments', label: t('المدفوعات', 'Payments'), icon: CreditCard });
-          tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
-          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
-          tabs.push({ href: '/notifications', label: t('التنبيهات', 'Notifications'), icon: Bell });
-          tabs.push({ href: '/documents-archive', label: t('أرشيف الوثائق', 'Documents'), icon: FileText });
-        } else if (isAccountant) {
-          tabs.push({ href: '/', label: t('لوحة التحكم', 'Dashboard'), icon: LayoutDashboard });
-          tabs.push({ href: '/bookings', label: t('حجز جديد', 'New Booking'), icon: CalendarDays });
-          tabs.push({ href: '/bookings-list', label: t('سجل الحجوزات', 'Bookings Log'), icon: ListIcon });
-          tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
-          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
-          tabs.push({ href: '/invoices', label: t('الفواتير', 'Invoices'), icon: FileText });
-          tabs.push({ href: '/payments', label: t('المدفوعات', 'Payments'), icon: CreditCard });
-          tabs.push({ href: '/reports', label: t('التقارير', 'Reports'), icon: PieChart });
-          tabs.push({ href: '/accounting/chart-of-accounts', label: t('دليل الحسابات', 'Accounts'), icon: BookOpen });
-          tabs.push({ href: '/accounting/statement', label: t('كشف حساب', 'Statement'), icon: ScrollText });
-          tabs.push({ href: '/accounting/periods', label: t('الفترات المحاسبية', 'Periods'), icon: CalendarDays });
-          tabs.push({ href: '/accounting/platforms', label: t('تسوية المنصات', 'Platforms'), icon: Building2 });
-          tabs.push({ href: '/accounting/manual-entry', label: t('قيود يدوية', 'Manual Entries'), icon: ArrowLeftRight });
-        } else if (isMarketing) {
-          tabs.push({ href: '/', label: t('لوحة التحكم', 'Dashboard'), icon: LayoutDashboard });
-          tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
-          tabs.push({ href: '/reports', label: t('التقارير', 'Reports'), icon: PieChart });
-        } else {
-          // Admin & Manager
-          tabs.push({ href: '/', label: t('لوحة التحكم', 'Dashboard'), icon: LayoutDashboard });
-          tabs.push({ href: '/bookings', label: t('حجز جديد', 'New Booking'), icon: CalendarDays });
-          tabs.push({ href: '/group-bookings', label: t('حجز متعدد', 'Group Booking'), icon: Layers });
-          tabs.push({ href: '/bookings-list', label: t('سجل الحجوزات', 'Bookings Log'), icon: ListIcon });
-          if (isAdmin || isManager) tabs.push({ href: '/units', label: t('الوحدات', 'Units'), icon: BedDouble });
-          tabs.push({ href: '/cleaning', label: t('النظافة والصيانة', 'Cleaning & Maintenance'), icon: Brush });
-          tabs.push({ href: '/notifications', label: t('التنبيهات', 'Notifications'), icon: Bell });
-          tabs.push({ href: '/customers', label: t('العملاء والضيوف', 'Customers'), icon: Users });
-          tabs.push({ href: '/documents-archive', label: t('أرشيف الوثائق', 'Documents'), icon: FileText });
-          
-          // Financial
-          tabs.push({ href: '/invoices', label: t('الفواتير', 'Invoices'), icon: FileText });
-          tabs.push({ href: '/payments', label: t('المدفوعات', 'Payments'), icon: CreditCard });
-          tabs.push({ href: '/reports', label: t('التقارير', 'Reports'), icon: PieChart });
-
-          // Accounting (Admin Only by default, but Manager might need it too if requested)
-          // Matching Sidebar.tsx: (!isManager || isAccountant)
-          if (!isManager) {
-            tabs.push({ href: '/accounting/chart-of-accounts', label: t('دليل الحسابات', 'Accounts'), icon: BookOpen });
-            tabs.push({ href: '/accounting/statement', label: t('كشف حساب', 'Statement'), icon: ScrollText });
-            tabs.push({ href: '/accounting/periods', label: t('الفترات المحاسبية', 'Periods'), icon: CalendarDays });
-            tabs.push({ href: '/accounting/platforms', label: t('تسوية المنصات', 'Platforms'), icon: Building2 });
-            tabs.push({ href: '/accounting/manual-entry', label: t('قيود يدوية', 'Manual Entries'), icon: ArrowLeftRight });
-          }
-
-          // System
-          if (isAdmin) {
-            tabs.push({ href: '/admin/users', label: t('الموظفين', 'Users'), icon: UserCog });
-            tabs.push({ href: '/admin/audit-log', label: t('سجل المراقبة', 'Audit'), icon: HistoryIcon });
-            tabs.push({ href: '/admin/audit', label: t('سجل النشاط', 'Activity'), icon: ActivityShieldIcon });
-            tabs.push({ href: '/settings', label: t('الإعدادات', 'Settings'), icon: Settings });
-          }
-        }
-
-        if (openUp) {
-          const bottom = Math.max(8, wh - pos.y);
-          return (
-            <div
-              style={{ left, bottom, transform: 'translateX(-50%)' }}
-              className="fixed z-50 w-72 max-h-[70vh] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
-            >
-              <div className="p-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                <div className="text-xs font-bold text-gray-600">{t('القائمة السريعة', 'Quick menu')}</div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={onToggleLanguage}
-                    className="h-8 px-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 flex items-center gap-1.5"
-                    aria-label={t('تغيير اللغة', 'Change language')}
-                  >
-                    <Languages size={16} />
-                    <span className="text-[10px] font-bold">{language === 'en' ? 'AR' : 'EN'}</span>
-                  </button>
-                  <X size={16} className="text-gray-400 cursor-pointer" onClick={() => setOpen(false)} />
-                </div>
-              </div>
-              <div className="overflow-y-auto p-3 bg-white">
-                <div className="grid grid-cols-3 gap-3">
-                  {tabs.map(({ href, label, icon: Icon }) => (
-                    <Link
-                      key={href}
-                      href={href}
-                      onClick={() => setOpen(false)}
-                      className="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-emerald-50 transition-colors group"
-                    >
-                      <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-900 group-hover:bg-emerald-100 group-hover:text-emerald-900 group-hover:border-emerald-200 transition-all">
-                        <Icon size={20} />
-                      </div>
-                      <div className="text-[10px] font-extrabold text-emerald-950 text-center leading-tight">{label}</div>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        } else {
-          const maxTop = wh - 8 - menuH;
-          const top = Math.max(8, Math.min(pos.y + 72, maxTop));
-          return (
-            <div
-              style={{ left, top, transform: 'translateX(-50%)' }}
-              className="fixed z-50 w-72 max-h-[70vh] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
-            >
-              <div className="p-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                <div className="text-xs font-bold text-gray-600">{t('القائمة السريعة', 'Quick menu')}</div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={onToggleLanguage}
-                    className="h-8 px-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 flex items-center gap-1.5"
-                    aria-label={t('تغيير اللغة', 'Change language')}
-                  >
-                    <Languages size={16} />
-                    <span className="text-[10px] font-bold">{language === 'en' ? 'AR' : 'EN'}</span>
-                  </button>
-                  <X size={16} className="text-gray-400 cursor-pointer" onClick={() => setOpen(false)} />
-                </div>
-              </div>
-              <div className="overflow-y-auto p-3 bg-white">
-                <div className="grid grid-cols-3 gap-3">
-                  {tabs.map(({ href, label, icon: Icon }) => (
-                    <Link
-                      key={href}
-                      href={href}
-                      onClick={() => setOpen(false)}
-                      className="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-emerald-50 transition-colors group"
-                    >
-                      <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-900 group-hover:bg-emerald-100 group-hover:text-emerald-900 group-hover:border-emerald-200 transition-all">
-                        <Icon size={20} />
-                      </div>
-                      <div className="text-[10px] font-extrabold text-emerald-950 text-center leading-tight">{label}</div>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        }
-      })()}
-    </div>
-  );
+  return <>
+    <button type="button" aria-label={t('فتح قائمة التنقل؛ يمكن سحب الزر لتغيير مكانه', 'Open navigation; drag to reposition')}
+      aria-haspopup="dialog" aria-expanded={open} onClick={() => {
+        if (suppressClick.current) { suppressClick.current = false; return; }
+        setOpen(true);
+      }}
+      onPointerDown={event => {
+        if (event.button !== 0) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        suppressClick.current = false;
+        gesture.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => {
+        const start = gesture.current;
+        if (!start) return;
+        const dx = event.clientX - start.x;
+        const dy = event.clientY - start.y;
+        if (!start.moved && Math.hypot(dx, dy) < 6) return;
+        start.moved = true;
+        suppressClick.current = true;
+        const rect = event.currentTarget.getBoundingClientRect();
+        setPosition({ x: Math.max(12, Math.min(start.left + dx, window.innerWidth - rect.width - 12)),
+          y: Math.max(12, Math.min(start.top + dy, window.innerHeight - rect.height - 12)) });
+      }}
+      onPointerUp={() => { gesture.current = null; }}
+      onPointerCancel={() => { gesture.current = null; suppressClick.current = false; }}
+      style={position ? { left: position.x, top: position.y } : { insetInlineEnd: '1.25rem', bottom: 'max(1.25rem, env(safe-area-inset-bottom))' }}
+      className="fixed z-40 flex h-14 touch-none select-none items-center gap-2 rounded-2xl border border-emerald-700 bg-emerald-950 px-4 text-white shadow-xl shadow-emerald-950/25 transition-[background-color,box-shadow] hover:bg-emerald-900 hover:shadow-2xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-700 motion-reduce:transition-none 2xl:hidden print:hidden">
+      <Menu size={21} strokeWidth={1.8} /><span className="text-xs font-semibold">{t('القائمة', 'Menu')}</span><GripVertical size={13} className="text-emerald-400/70" />
+    </button>
+    <ModalOverlay isOpen={open} onOpenChange={setOpen} isDismissable
+      className="fixed inset-0 z-[100] flex bg-stone-950/40 backdrop-blur-sm motion-safe:data-entering:animate-in motion-safe:data-entering:fade-in motion-safe:data-exiting:animate-out motion-safe:data-exiting:fade-out motion-safe:duration-200">
+      <Modal dir={english ? 'ltr' : 'rtl'} className={`h-dvh w-[min(21rem,calc(100vw-1.5rem))] rounded-e-3xl bg-white shadow-2xl outline-none motion-safe:data-entering:animate-in motion-safe:data-exiting:animate-out motion-safe:duration-200 ${english ? 'mr-auto motion-safe:data-entering:slide-in-from-left-4' : 'ml-auto motion-safe:data-entering:slide-in-from-right-4'}`}>
+        <Dialog dir={english ? 'ltr' : 'rtl'} className="flex h-full min-h-0 flex-col outline-none">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-stone-100 px-5 py-4">
+            <div><Heading slot="title" className="text-sm font-bold text-stone-900">{t('مساحة العمل', 'Workspace')}</Heading><p className="mt-1 text-[11px] text-stone-400">{t('كل ما تحتاجه، في مكان واحد', 'Everything you need in one place')}</p></div>
+            <Button slot="close" aria-label={t('إغلاق القائمة', 'Close navigation')} className="flex size-10 items-center justify-center rounded-xl bg-stone-100 text-stone-500 hover:bg-stone-200 focus-visible:outline-2 focus-visible:outline-emerald-700"><X size={18} /></Button>
+          </div>
+          <SidebarContent onNavigate={() => setOpen(false)} hideBrand />
+        </Dialog>
+      </Modal>
+    </ModalOverlay>
+  </>;
 }

@@ -7,6 +7,10 @@ export async function POST(req: Request) {
   try {
     const supabase = await createClient();
     const body = await req.json();
+    const offset = Number(body?.offset ?? 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      return NextResponse.json({ ok: false, error: 'invalid_offset' }, { status: 400 });
+    }
     const docType       = body?.doc_type       || null;
     const unitNumber    = body?.unit_number    || null;
     const customerId    = body?.customer_id    || null;
@@ -41,14 +45,14 @@ export async function POST(req: Request) {
         unit:units(id, unit_number, unit_type_id, status)
       `)
       .order('uploaded_at', { ascending: false })
-      .limit(300);
+      .order('id', { ascending: false })
+      .range(offset, offset + 299);
 
     if (docType)      q = q.eq('doc_type', docType);
     if (unitNumber)   q = q.ilike('unit_number', `%${unitNumber}%`);
     if (customerId)   q = q.eq('customer_id', customerId);
-    if (bookingId)    q = q.eq('booking_id', bookingId);
     if (dateFrom)     q = q.gte('doc_date', dateFrom);
-    if (dateTo)       q = q.lte('doc_date', `${dateTo}T23:59:59`);
+    if (dateTo)       q = q.lte('doc_date', String(dateTo).includes('T') ? dateTo : `${dateTo}T23:59:59`);
 
     const { data, error } = await q;
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -76,29 +80,42 @@ export async function POST(req: Request) {
     // البحث في system_events عن أول حدث document_uploaded يحمل هذا المستند
     // للحصول على booking_id الدقيق.
     const docIds = rows.map(r => String(r.id));
-    let eventBookingMap = new Map<string, any>();
+    const eventBookingMap = new Map<string, any>();
     if (docIds.length > 0) {
       try {
-        const { data: evs } = await supabase
-          .from('system_events')
-          .select('id, event_type, booking_id, created_by, payload, created_at')
-          .eq('event_type', 'document_uploaded')
-          .filter('payload', 'not.is', null)
-          .order('created_at', { ascending: false });
-        (evs || []).forEach((ev: any) => {
-          const payloadPath = String(ev?.payload?.path || '').toLowerCase();
-          const payloadBookingId = String(ev?.payload?.booking_id || ev?.booking_id || '').trim();
-          if (!payloadBookingId) return;
-          if (!payloadPath) return;
-          // نربط عبر مسار التخزين (فريد تماماً لكل ملف مرفوع)
-          eventBookingMap.set(payloadPath, {
-            booking_id: payloadBookingId,
-            uploaded_by: ev?.created_by || null,
-            uploaded_at: ev?.created_at || null,
-            requested_type: String(ev?.payload?.requested_type || '').trim()
-          });
-        });
-      } catch { /* تجاهل فشل جلب الأحداث — نكمل ببيانات أساسية */ }
+        const paths = [...new Set(rows.map(r => String(r.storage_path || '')).filter(Boolean))];
+        for (let pathOffset = 0; pathOffset < paths.length; pathOffset += 30) {
+          for (let eventOffset = 0; ; eventOffset += 500) {
+            const { data: evs, error: eventsError } = await supabase
+              .from('system_events')
+              .select('id, event_type, booking_id, created_by, payload, created_at')
+              .eq('event_type', 'document_uploaded')
+              .in('payload->>path', paths.slice(pathOffset, pathOffset + 30))
+              .order('created_at', { ascending: false })
+              .order('id', { ascending: false })
+              .range(eventOffset, eventOffset + 499);
+            if (eventsError) throw eventsError;
+            (evs || []).forEach((ev: any) => {
+              const payloadPath = String(ev?.payload?.path || '').toLowerCase();
+              const payloadBookingId = String(ev?.payload?.booking_id || ev?.booking_id || '').trim();
+              if (!payloadBookingId) return;
+              if (!payloadPath) return;
+              if (eventBookingMap.has(payloadPath)) return;
+              // نربط عبر مسار التخزين (فريد تماماً لكل ملف مرفوع)
+              eventBookingMap.set(payloadPath, {
+                booking_id: payloadBookingId,
+                uploaded_by: ev?.created_by || null,
+                uploaded_at: ev?.created_at || null,
+                requested_type: String(ev?.payload?.requested_type || '').trim()
+              });
+            });
+            if (!evs || evs.length < 500) break;
+          }
+        }
+      } catch {
+        // A booking filter must never silently return unrelated documents.
+        if (bookingId) return NextResponse.json({ ok: false, error: 'booking_lookup_failed' }, { status: 500 });
+      }
     }
 
     // إزالة التكرارات عبر مسار التخزين ثم إعداد النتيجة
@@ -112,6 +129,7 @@ export async function POST(req: Request) {
     for (const d of dedupMap.values()) {
       const { data: pub } = supabase.storage.from('documents').getPublicUrl(d.storage_path);
       const ev = eventBookingMap.get((d.storage_path || '').toLowerCase()) || null;
+      if (bookingId && ev?.booking_id !== String(bookingId)) continue;
       result.push({
         id: d.id,
         doc_type: d.doc_type,
@@ -134,7 +152,7 @@ export async function POST(req: Request) {
       });
     }
 
-    return NextResponse.json({ ok: true, documents: result }, { status: 200 });
+    return NextResponse.json({ ok: true, documents: result, next_offset: data?.length === 300 ? offset + 300 : null }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || 'internal' }, { status: 500 });
   }

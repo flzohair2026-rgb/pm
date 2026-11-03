@@ -18,7 +18,6 @@ import {
   BookOpen,
   ScrollText,
   UserCog,
-  Wrench,
   Brush,
   Bell,
   Building2,
@@ -42,7 +41,7 @@ interface SidebarItemProps {
 }
 
 const SidebarItem = ({ icon: Icon, label, href, onClick, disabled, pathname }: SidebarItemProps) => {
-  const isActive = pathname === href;
+  const isActive = pathname === href || (href !== '/' && pathname.startsWith(`${href}/`));
 
   return (
     <Link 
@@ -55,22 +54,23 @@ const SidebarItem = ({ icon: Icon, label, href, onClick, disabled, pathname }: S
         onClick?.();
       }}
       className={cn(
-        "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
-        "lg:justify-center xl:justify-start lg:group-hover:justify-start",
-        "hover:bg-emerald-50 text-emerald-900",
-        isActive && "bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white font-extrabold shadow-sm",
+        "group/item relative mb-1 flex min-h-11 items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-emerald-700 motion-reduce:transition-none",
+        isActive ? "border-emerald-100 bg-emerald-50 text-emerald-950 font-bold" : "text-stone-500 hover:bg-stone-100/70 hover:text-stone-900",
         disabled && "opacity-50 cursor-not-allowed pointer-events-none"
       )}
       aria-disabled={disabled ? true : undefined}
+      aria-current={isActive ? 'page' : undefined}
+      tabIndex={disabled ? -1 : undefined}
       title={label}
     >
-      <Icon size={20} />
-      <span className="hidden xl:inline lg:group-hover:inline">{label}</span>
+      <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors', isActive ? 'bg-emerald-900 text-white shadow-sm' : 'text-stone-400 group-hover/item:text-emerald-800')}><Icon size={17} strokeWidth={1.7} /></span>
+      <span className="min-w-0 flex-1">{label}</span>
+      {isActive && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-emerald-600" />}
     </Link>
   );
 };
 
-export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarContent({ onNavigate, hideBrand = false }: { onNavigate?: () => void; hideBrand?: boolean }) {
   const pathname = usePathname();
   const { role, loading, signOut } = useAuthContext();
   const { language, toggleLanguage } = useAppLanguage();
@@ -102,16 +102,15 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <>
-      <div className="p-6 hidden xl:block">
-        <div className="flex flex-col items-center text-center gap-2">
-          <Logo className="w-16 h-16 object-contain" alt="Logo" />
-          <div className="text-[12px] font-extrabold text-emerald-900">نظام ادارة الفنادق</div>
+      {!hideBrand && <div className="shrink-0 border-b border-stone-100 px-5 py-6">
+        <div className="flex items-center justify-center brightness-[0.55]">
+          <Logo className="size-16 object-contain" alt={t('شعار المنشأة', 'Company logo')} />
         </div>
-      </div>
+      </div>}
 
-      <nav className="flex-1 p-2 xl:p-4 space-y-1 overflow-y-auto">
+      <nav aria-label={t('التنقل الرئيسي', 'Main navigation')} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-5 [scrollbar-width:thin]">
         <div className="mb-4">
-            <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('العمليات', 'Operations')}</p>
+            <p className="mb-3 px-3 text-[10px] font-semibold tracking-wide text-stone-400">{t('العمليات', 'Operations')}</p>
             {isHousekeeping ? (
               <>
                 <SidebarItem icon={Brush} label={t('النظافة والصيانة', 'Cleaning & Maintenance')} href="/cleaning" onClick={onNavigate} pathname={pathname} />
@@ -160,7 +159,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
         {!isReceptionist && !isHousekeeping && (
           <div className="mb-4">
-              <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('المالية والتقارير', 'Finance & Reports')}</p>
+              <p className="mb-3 px-3 text-[10px] font-semibold tracking-wide text-stone-400">{t('المالية والتقارير', 'Finance & Reports')}</p>
               {!isMarketing && (
                 <>
                   <SidebarItem icon={FileText} label={t('الفواتير', 'Invoices')} href="/invoices" onClick={onNavigate} pathname={pathname} />
@@ -173,7 +172,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
         {!isReceptionist && !isHousekeeping && (!isManager || isAccountant) && !isMarketing && (
           <div className="mb-4">
-              <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('المحاسبة', 'Accounting')}</p>
+              <p className="mb-3 px-3 text-[10px] font-semibold tracking-wide text-stone-400">{t('المحاسبة', 'Accounting')}</p>
               <SidebarItem icon={BookOpen} label={t('دليل الحسابات', 'Chart of Accounts')} href="/accounting/chart-of-accounts" onClick={onNavigate} pathname={pathname} />
               <SidebarItem icon={ScrollText} label={t('كشف حساب', 'Statement')} href="/accounting/statement" onClick={onNavigate} pathname={pathname} />
               <SidebarItem icon={CalendarDays} label={t('الفترات المحاسبية', 'Periods')} href="/accounting/periods" onClick={onNavigate} pathname={pathname} />
@@ -183,7 +182,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         )}
 
         <div>
-            <p className="px-3 text-xs font-extrabold text-emerald-800 uppercase tracking-wider mb-2 hidden xl:block">{t('النظام', 'System')}</p>
+            <p className="mb-3 px-3 text-[10px] font-semibold tracking-wide text-stone-400">{t('النظام', 'System')}</p>
             {isAdmin && (
               <>
                 <SidebarItem icon={UserCog} label={t('المستخدمين والصلاحيات', 'Users & Roles')} href="/admin/users" onClick={onNavigate} pathname={pathname} />
@@ -198,20 +197,20 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </nav>
 
-      <div className="p-2 xl:p-4 border-t">
+      <div className="shrink-0 space-y-1 border-t border-stone-100 bg-stone-50/60 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <button
           onClick={onToggleLanguage}
-          className="flex items-center gap-3 px-3 py-2 w-full hover:bg-emerald-50 rounded-md transition-colors lg:justify-center xl:justify-start text-emerald-900"
+          className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-xs text-stone-600 transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-emerald-700"
         >
-          <Languages size={20} />
-          <span className="hidden xl:inline">{language === 'en' ? 'العربية' : 'English'}</span>
+          <Languages size={17} />
+          <span>{language === 'en' ? 'العربية' : 'English'}</span>
         </button>
         <button
           onClick={async () => { try { await signOut(); router.refresh(); } catch {} }}
-          className="flex items-center gap-3 px-3 py-2 w-full text-right text-red-600 hover:bg-red-50 rounded-md transition-colors lg:justify-center xl:justify-start"
+          className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-xs text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-red-600"
         >
-          <LogOut size={20} />
-          <span className="hidden xl:inline">{t('تسجيل الخروج', 'Sign out')}</span>
+          <LogOut size={17} />
+          <span>{t('تسجيل الخروج', 'Sign out')}</span>
         </button>
       </div>
     </>
@@ -220,8 +219,9 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
 export default function Sidebar() {
   return (
-    <aside className="group hidden 2xl:flex 2xl:w-64 transition-[width] duration-300 bg-white h-screen flex-col fixed right-0 top-0 z-50 overflow-y-auto overflow-x-hidden shadow-sm ring-1 ring-emerald-100/70">
+    <aside className="fixed right-0 top-0 z-50 hidden h-dvh w-64 flex-col overflow-hidden border-l border-stone-200/80 bg-white 2xl:flex">
       <SidebarContent />
     </aside>
   );
 }
+

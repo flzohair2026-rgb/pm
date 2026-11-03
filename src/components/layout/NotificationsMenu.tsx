@@ -86,12 +86,15 @@ export default function NotificationsMenu() {
   return (
     <div className="relative" ref={menuRef}>
       <button 
+        type="button"
+        aria-label="التنبيهات"
+        aria-expanded={isOpen}
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors focus:outline-none"
+        className="relative flex size-10 items-center justify-center rounded-xl border border-stone-200 text-stone-500 transition-colors hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 focus-visible:outline-2 focus-visible:outline-emerald-700"
       >
         <Bell size={20} />
         {unreadCount > 0 && (
-          <span className="absolute top-2 right-2.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white animate-pulse"></span>
+          <span className="absolute end-2 top-2 size-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
         )}
       </button>
 

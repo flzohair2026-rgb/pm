@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import RoleGate from '@/components/auth/RoleGate';
 import { ArrowRight, CalendarDays, Download, FileText, Loader2 } from 'lucide-react';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
+import DailyReportPrint from '@/components/reports/DailyReportPrint';
 
 function toYMD(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
@@ -27,7 +28,7 @@ function formatDateOnly(value: string | null) {
 }
 
 function formatCurrency(n: number) {
-  return `${Math.round(n).toLocaleString('ar-SA')} ر.س`;
+  return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ر.س`;
 }
 
 export default function DailyReportPage() {
@@ -44,6 +45,18 @@ export default function DailyReportPage() {
   }, [hotelNameById, selectedHotelId]);
 
   const [loading, setLoading] = useState(true);
+  const [companyName, setCompanyName] = useState('شموخ الرفاهية');
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null);
+  const [brandingReady, setBrandingReady] = useState(false);
+  const [metaLoadedKey, setMetaLoadedKey] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setCompanyName(localStorage.getItem('companyName') || 'شموخ الرفاهية');
+      setCompanyLogo(localStorage.getItem('companyLogo') || null);
+    } catch {
+      // Keep the default branding when browser storage is unavailable.
+    } finally { setBrandingReady(true); }
+  }, []);
   const [events, setEvents] = useState<any[]>([]);
   const [todayInvoices, setTodayInvoices] = useState<any[]>([]);
   const [todayPayments, setTodayPayments] = useState<any[]>([]);
@@ -183,13 +196,6 @@ export default function DailyReportPage() {
     run();
   }, [date, selectedHotelId]);
 
-  useEffect(() => {
-    if (!autoprint) return;
-    if (loading) return;
-    const t = setTimeout(() => window.print(), 250);
-    return () => clearTimeout(t);
-  }, [autoprint, loading]);
-
   const groups = useMemo(() => {
     const byType = new Map<string, any[]>();
     for (const e of events) {
@@ -219,6 +225,7 @@ export default function DailyReportPage() {
     const run = async () => {
       if (bookingIdsForMeta.length === 0) {
         setBookingMeta(new Map());
+        setMetaLoadedKey(bookingIdsKey);
         return;
       }
       const { data } = await supabase
@@ -234,36 +241,24 @@ export default function DailyReportPage() {
         m.set(b.id, { unit: unitNumber || '-', customer: customerName || '-', check_in: inD, check_out: outRaw });
       });
       setBookingMeta(m);
+      setMetaLoadedKey(bookingIdsKey);
     };
     run();
   }, [bookingIdsKey, bookingIdsForMeta]);
 
+  const printReady = !loading && brandingReady && metaLoadedKey === bookingIdsKey;
+  useEffect(() => {
+    if (!autoprint || !printReady) return;
+    const timer = setTimeout(() => window.print(), 250);
+    return () => clearTimeout(timer);
+  }, [autoprint, printReady]);
+
   return (
     <RoleGate allow={['admin', 'manager', 'accountant', 'receptionist']}>
-      <div className="space-y-6 p-4 sm:p-6 max-w-6xl mx-auto">
-        <style>{`
-          @media print {
-            header, aside, nav, .screen-only { display: none !important; }
-            .print-only { display: block !important; }
-            body { background: #fff !important; }
-            .p-card { break-inside: avoid; }
-            .p-table { width: 100%; border-collapse: collapse; }
-            .p-table th, .p-table td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 10px; }
-            .p-table th { background: #f3f4f6; font-weight: 800; }
-          }
-          .print-only { display: none; }
-        `}</style>
-
-        <div className="print-only">
-          <div className="flex items-start justify-between border-b pb-3">
-            <div>
-              <div className="text-lg font-black text-gray-900">تقرير اليوم</div>
-              <div className="text-xs text-gray-600">التاريخ: {date}</div>
-              <div className="text-xs text-gray-600">الفندق: {selectedHotelName}</div>
-            </div>
-            <div className="text-xs text-gray-600">مساكن</div>
-          </div>
-        </div>
+      <div className="daily-report-page p-4 sm:p-6 max-w-6xl mx-auto">
+        {printReady && <DailyReportPrint companyName={companyName} companyLogo={companyLogo} date={date} hotelLabel={selectedHotelName}
+          events={events} invoices={todayInvoices} payments={todayPayments} remainingRows={remainingRows} totals={totals} bookingMeta={bookingMeta} />}
+        <div className="daily-report-screen space-y-6">
 
         {!isEmbed && (
           <div className="screen-only flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -297,6 +292,7 @@ export default function DailyReportPage() {
               <button
                 type="button"
                 onClick={() => window.print()}
+                disabled={!printReady}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 font-black text-sm hover:bg-gray-50"
               >
                 <Download size={18} />
@@ -518,6 +514,7 @@ export default function DailyReportPage() {
             </div>
           </>
         )}
+        </div>
       </div>
     </RoleGate>
   );

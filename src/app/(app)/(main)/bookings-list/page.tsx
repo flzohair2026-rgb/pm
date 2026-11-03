@@ -4,140 +4,44 @@ import { cookies } from 'next/headers';
 import { Calendar, Layers } from 'lucide-react';
 import RoleGate from '@/components/auth/RoleGate';
 import BookingsListTable from '@/components/bookings/BookingsListTable';
+import { normalizeRegisterFilters, parseRegisterPage, registerUrl, type RegisterPage } from '@/lib/bookings/register';
 
 export const runtime = 'edge';
+export const metadata = { title: 'سجل الحجوزات' };
 
-export const metadata = {
-  title: 'سجل الحجوزات',
-};
-
-export default async function BookingsListPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ 
-    status?: string; 
-    type?: string; 
-    page?: string;
-    q?: string;
-    arrival?: string;
-    departure?: string;
-  }>;
-}) {
+export default async function BookingsListPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const supabase = await createClient();
-  const { status, type } = await searchParams;
-  const { data: { user } } = await supabase.auth.getUser();
-  let role: 'admin' | 'manager' | 'receptionist' | 'accountant' | 'marketing' | null = 'receptionist';
-  let defaultHotelId: string | null = null;
-  if (user?.id) {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, default_hotel_id')
-      .eq('id', user.id)
-      .single();
-    role = (prof?.role as any) || 'receptionist';
-    defaultHotelId = (prof as any)?.default_hotel_id ? String((prof as any).default_hotel_id) : null;
+  const params = await searchParams;
+  const scalar = (key: string) => typeof params[key] === 'string' ? params[key] as string : undefined;
+  const filters = normalizeRegisterFilters({ status: scalar('status'), type: scalar('type'), q: scalar('q'), arrival: scalar('arrival'), departure: scalar('departure'), contract: scalar('contract') });
+  const cookieHotel = (await cookies()).get('active_hotel_id')?.value || null;
+  let selectedHotelId = cookieHotel || 'all';
+  let initialPage: RegisterPage | null = null;
+  let initialError: string | null = null;
+  // Supabase authenticates the cookie-backed RPC. The invoker function checks
+  // the caller's role, resolves their default hotel, and preserves table RLS.
+  try {
+      const { data, error } = await supabase.rpc('get_bookings_register_page', {
+        p_filters: { ...filters, hotel: selectedHotelId }, p_page_size: 5, p_include_count: true,
+      }).abortSignal(AbortSignal.timeout(15000));
+      if (error) throw error;
+      initialPage = parseRegisterPage(data);
+      selectedHotelId = initialPage.hotelId || selectedHotelId;
+    } catch {
+      initialError = 'تعذر تحميل سجل الحجوزات. تحقق من الاتصال ثم أعد المحاولة.';
   }
-  const cookieStore = await cookies();
-  const cookieHotel = cookieStore.get('active_hotel_id')?.value || null;
-  const selectedHotelId = (() => {
-    if (role === 'admin') return cookieHotel || 'all';
-    if (cookieHotel && cookieHotel !== 'all') return cookieHotel;
-    if (defaultHotelId) return defaultHotelId;
-    return 'all';
-  })();
-  const buildQueryString = (patch: Record<string, string | undefined>) => {
-    const params = new URLSearchParams();
-    const nextStatus = patch.status ?? status;
-    const nextType = patch.type ?? type;
-    if (nextStatus && nextStatus !== 'all') params.set('status', nextStatus);
-    if (nextType && nextType !== 'all') params.set('type', nextType);
-    const qs = params.toString();
-    return qs ? `/bookings-list?${qs}` : '/bookings-list';
-  };
-
-  const FilterButton = ({ value, label }: { value: string, label: string }) => {
-    const isActive = (status === value) || (!status && value === 'all');
-    return (
-      <Link
-        href={buildQueryString({ status: value === 'all' ? 'all' : value })}
-        className={`px-2 py-1 sm:px-4 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-sm font-bold transition-colors border ${
-          isActive
-            ? 'bg-emerald-800 text-white border-emerald-800'
-            : 'bg-white text-emerald-900 hover:bg-emerald-50 border-emerald-200'
-        }`}
-      >
-        {label}
-      </Link>
-    );
-  };
-
-  const TypeFilterButton = ({ value, label }: { value: string, label: string }) => {
-    const isActive = (type === value) || (!type && value === 'all');
-    return (
-      <Link
-        href={buildQueryString({ type: value === 'all' ? 'all' : value })}
-        className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg text-[9px] sm:text-xs font-bold transition-colors border ${
-          isActive
-            ? 'bg-emerald-900 text-white border-emerald-900'
-            : 'bg-white text-emerald-900 hover:bg-emerald-50 border-emerald-200'
-        }`}
-      >
-        {label}
-      </Link>
-    );
-  };
-
-  return (
-    <RoleGate allow={['admin', 'manager', 'receptionist', 'accountant']}>
-      <div className="space-y-4 sm:space-y-6">
-        <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-3 sm:p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-start">
-            <div className="space-y-1">
-              <h1 className="text-lg sm:text-2xl font-extrabold text-emerald-950">سجل الحجوزات</h1>
-              <p className="text-xs sm:text-sm text-emerald-900">عرض وإدارة جميع الحجوزات المسجلة في النظام</p>
-            </div>
-            <div className="flex gap-1.5">
-              <Link
-                href="/bookings"
-                className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 hover:from-emerald-800 hover:via-emerald-900 hover:to-emerald-950 text-white px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg font-bold shadow-sm transition-colors flex items-center gap-1.5 text-[11px] sm:text-sm"
-              >
-                <Calendar size={14} />
-                <span className="sm:hidden">جديد</span>
-                <span className="hidden sm:inline">حجز جديد</span>
-              </Link>
-              <div
-                aria-disabled
-                title="غير متاح حالياً"
-                className="bg-gradient-to-l from-emerald-800 via-emerald-900 to-emerald-950 text-white px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg font-bold shadow-sm transition-colors flex items-center gap-1.5 opacity-50 cursor-not-allowed text-[11px] sm:text-sm"
-              >
-                <Layers size={14} />
-                <span className="sm:hidden">متعدد</span>
-                <span className="hidden sm:inline">حجز متعدد</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 sm:mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-2 sm:p-3 space-y-2">
-            <div className="flex flex-wrap gap-1.5">
-              <FilterButton value="all" label="الكل" />
-              <FilterButton value="pending_deposit" label="بانتظار العربون" />
-              <FilterButton value="confirmed" label="مؤكد" />
-              <FilterButton value="checked_in" label="تم الدخول" />
-              <FilterButton value="checked_out" label="تم الخروج" />
-              <FilterButton value="cancelled" label="ملغي" />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] sm:text-xs text-emerald-900 font-bold whitespace-nowrap">النوع:</span>
-              <TypeFilterButton value="all" label="الكل" />
-              <TypeFilterButton value="daily" label="يومي" />
-              <TypeFilterButton value="yearly" label="سنوي" />
-            </div>
+  return <RoleGate allow={['admin','manager','receptionist','accountant']}>
+    <div className="space-y-4 sm:space-y-6">
+      <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div><h1 className="text-lg font-bold text-stone-900 sm:text-2xl">سجل الحجوزات</h1><p className="mt-1 text-xs text-stone-500 sm:text-sm">عرض وإدارة جميع الحجوزات المسجلة في النظام</p></div>
+          <div className="flex gap-2">
+            <Link href="/bookings" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-900 px-4 text-xs font-semibold text-white hover:bg-emerald-800"><Calendar size={15} />حجز جديد</Link>
+            <div aria-disabled title="غير متاح حالياً" className="inline-flex min-h-11 cursor-not-allowed items-center gap-2 rounded-xl border border-stone-200 px-3 text-xs text-stone-400"><Layers size={15} />حجز متعدد</div>
           </div>
         </div>
-
-        <BookingsListTable selectedHotelId={selectedHotelId} pageSize={5} />
       </div>
-    </RoleGate>
-  );
+      <BookingsListTable key={`${selectedHotelId}:${registerUrl(filters)}`} selectedHotelId={selectedHotelId} pageSize={5} initialFilters={filters} initialPage={initialPage} initialError={initialError} />
+    </div>
+  </RoleGate>;
 }

@@ -1,39 +1,20 @@
 import React from 'react';
-import { 
-  DollarSign, 
-  Users, 
-  BedDouble, 
-  CalendarCheck,
-  TrendingUp,
-  Clock,
-  ArrowRight,
-  Download,
-  Plus,
-  Bell,
-  Zap,
-  CreditCard,
-  FileText,
-  Layers
-} from 'lucide-react';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase-server';
-import { KPICard } from '@/components/dashboard/KPICard';
 import { Unit } from '@/components/dashboard/RoomStatusGrid';
 import RoomStatusWithDate from '@/components/dashboard/RoomStatusWithDate';
 import { RecentBookingsTable, Booking } from '@/components/dashboard/RecentBookingsTable';
-import { RevenueChart } from '@/components/dashboard/RevenueChart';
-import { formatDistanceToNow } from 'date-fns';
-import { ar, enUS } from 'date-fns/locale';
-import GlobalCustomerSearch from '@/components/dashboard/GlobalCustomerSearch';
-import { WelcomeSummary, WelcomeSummaryData, WelcomeChip } from '@/components/dashboard/WelcomeSummary';
+import DashboardOverview from '@/components/dashboard/DashboardOverview';
+import { measureDashboard } from '@/lib/dashboard-performance';
 
 export const runtime = 'edge';
 
 export default async function Home() {
+  const measurement = measureDashboard('server');
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
+  measurement.mark('auth');
   let role: 'admin' | 'manager' | 'receptionist' | 'accountant' | 'marketing' | 'housekeeping' | null = 'receptionist';
   let defaultHotelId: string | null = null;
   if (user?.id) {
@@ -45,6 +26,7 @@ export default async function Home() {
     role = (prof?.role as any) || 'receptionist';
     defaultHotelId = (prof as any)?.default_hotel_id ? String((prof as any).default_hotel_id) : null;
   }
+  measurement.mark('profile');
   if (role === 'housekeeping') {
     redirect('/cleaning');
   }
@@ -68,7 +50,6 @@ export default async function Home() {
     currency: 'SAR',
     maximumFractionDigits: 0
   });
-  const timeAgoLocale = language === 'en' ? enUS : ar;
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
   const nextDayStr = (() => {
     const base = new Date(`${todayStr}T00:00:00`);
@@ -81,16 +62,18 @@ export default async function Home() {
     return d.toISOString().split('T')[0];
   }).reverse();
   const last7Start = last7Days[0];
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfMonthStr = startOfMonth.toISOString().split('T')[0];
+  // todayStr is already a Riyadh calendar date; do not convert local midnight to UTC.
+  const startOfMonthStr = `${todayStr.slice(0, 7)}-01`;
+  const endOfMonthExclusiveStr = new Date(Date.UTC(
+    Number(todayStr.slice(0, 4)), Number(todayStr.slice(5, 7)), 1
+  )).toISOString().split('T')[0];
 
   // ==========================================
   // BATCH 1: المستقل عن الفنادق — يعمل مباشرة
   // ==========================================
   const unitsBase = supabase
     .from('units')
-    .select('id, unit_number, status, unit_type_id, unit_type:unit_types(id, name, annual_price, daily_price, price_per_year)')
+    .select('id, unit_number, status, unit_type_id, unit_type:unit_types(id, name, annual_price, daily_price)')
     .order('unit_number');
   const activeBookingsBase = supabase
     .from('bookings')
@@ -147,9 +130,21 @@ export default async function Home() {
     .eq('check_out', todayStr);
   const notifBase = supabase
     .from('system_events')
-    .select('*')
+    .select('id, message, created_at, booking_id')
+    .not('booking_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(4);
+  // Use the same booking-only feed for both snapshot and fallback paths.
+  // Filtering must happen before limiting, rather than filtering snapshot events.
+  const bookingNotificationsPromise = (async () => {
+    try {
+      return await (selectedHotelId !== 'all'
+        ? notifBase.eq('hotel_id', selectedHotelId)
+        : notifBase);
+    } catch {
+      return { data: [], error: null };
+    }
+  })();
   const in1 = new Date(`${todayStr}T00:00:00`);
   in1.setDate(in1.getDate() + 1);
   const in3 = new Date(`${todayStr}T00:00:00`);
@@ -158,7 +153,7 @@ export default async function Home() {
   const expiringEnd = in3.toISOString().split('T')[0];
   const latePaymentsBase = supabase
     .from('invoices')
-    .select('id, booking_id, due_date, hotel_id, booking:bookings(unit_id, units(unit_number))')
+    .select('id, booking_id, due_date, booking:bookings!inner(hotel_id, unit_id, units(unit_number))')
     .in('status', ['posted'])
     .not('due_date', 'is', null)
     .lt('due_date', todayStr)
@@ -199,6 +194,8 @@ export default async function Home() {
   let typesData: any = [];
   let tempRes: any = [];
 
+  let snapshotErrorCode = 'none';
+  measurement.mark('prepare');
   try {
     const rpcSnap = await supabase.rpc('get_dashboard_full_snapshot', {
       p_hotel_id:        selectedHotelId,
@@ -209,7 +206,10 @@ export default async function Home() {
       p_expiring_start:  expiringStart,
       p_expiring_end:    expiringEnd
     });
-    if (rpcSnap.error) throw new Error(String(rpcSnap.error.message || rpcSnap.error || 'rpc_error'));
+    if (rpcSnap.error) {
+      snapshotErrorCode = rpcSnap.error.code || 'rpc_error';
+      throw new Error('dashboard_snapshot_failed');
+    }
     const snap: any = rpcSnap.data || null;
     if (snap && snap.success === true) {
       rpcMode = 'rpc';
@@ -223,18 +223,23 @@ export default async function Home() {
       pendingArrivalsCount  = typeof snap.pending_arrivals_count === 'number' ? snap.pending_arrivals_count : null;
       delayedBookings     = Array.isArray(snap.delayed_bookings)   ? snap.delayed_bookings    : [];
       checkoutBookings    = Array.isArray(snap.checkout_bookings)  ? snap.checkout_bookings   : [];
-      notifications       = Array.isArray(snap.notifications)     ? snap.notifications       : [];
-      hotelRevenueRes     = snap.hotel_revenue || { mode: 'err' as const, msg: '' };
+      // The all-hotels RPC returns cash-flow stats directly, unlike per-hotel data.
+      hotelRevenueRes     = snap.hotel_revenue && !snap.hotel_revenue.mode && 'month_revenue' in snap.hotel_revenue
+        ? { mode: 'rpc', data: snap.hotel_revenue }
+        : snap.hotel_revenue || { mode: 'err' as const, msg: '' };
       latePaymentsRaw     = Array.isArray(snap.late_payments)      ? snap.late_payments       : [];
       expiringRaw         = Array.isArray(snap.expiring_bookings)  ? snap.expiring_bookings   : [];
       typesData           = Array.isArray(snap.unit_types)         ? snap.unit_types          : [];
       tempRes             = Array.isArray(snap.temp_reservations)  ? snap.temp_reservations   : [];
     } else {
+      snapshotErrorCode = 'malformed_response';
       throw new Error('rpc_malformed_response');
     }
   } catch {
+    if (snapshotErrorCode === 'none') snapshotErrorCode = 'request_failed';
     rpcMode = 'fallback';
   }
+  measurement.mark('snapshot_rpc');
 
   // ==========================================
   // 🛟 FALLBACK آمن للكود القديم (الـ 18 استعلام)
@@ -268,13 +273,7 @@ export default async function Home() {
       applyHotel(pendingArrivalsBase, selectedHotelId),
       applyHotel(delayedBase, selectedHotelId),
       applyHotel(checkoutBase, selectedHotelId),
-      // الإشعارات: فقط لو كان الفندق محددًا نفلتر (وإلا كل الفنادق)
-      (async () => {
-        try {
-          if (selectedHotelId !== 'all') return await notifBase.eq('hotel_id', selectedHotelId);
-          return await notifBase;
-        } catch { return { data: [], error: null } as any; }
-      })(),
+      bookingNotificationsPromise,
       // الإيرادات والرسوم البيانية — تفرّع حسب الفندق
       (async () => {
         try {
@@ -284,6 +283,7 @@ export default async function Home() {
               .select('amount,payment_date,status, invoice:invoices!inner(booking:bookings!inner(hotel_id))')
               .eq('status', 'posted')
               .gte('payment_date', startOfMonthStr)
+              .lt('payment_date', endOfMonthExclusiveStr)
               .eq('invoice.booking.hotel_id', selectedHotelId);
             const weekP = supabase
               .from('payments')
@@ -302,14 +302,15 @@ export default async function Home() {
           const rev = await supabase
             .from('revenue_schedules')
             .select('amount, recognition_date')
-            .gte('recognition_date', startOfMonthStr);
+            .gte('recognition_date', startOfMonthStr)
+            .lt('recognition_date', endOfMonthExclusiveStr);
           return { mode: 'fallback', data: rev.data } as const;
         } catch (e: any) {
           return { mode: 'err' as const, msg: String(e?.message || e) };
         }
       })(),
       // ملخص الترحيب — بنفس الدفعة المتوازية لا تُضيف وقتًا
-      applyHotel(latePaymentsBase, selectedHotelId),
+      selectedHotelId !== 'all' ? latePaymentsBase.eq('booking.hotel_id', selectedHotelId) : latePaymentsBase,
       applyHotel(expiringBase, selectedHotelId)
     ]);
 
@@ -338,7 +339,7 @@ export default async function Home() {
         if (typeIdsFb.length === 0) return [];
         const { data } = await supabase
           .from('unit_types')
-          .select('id, name, annual_price, daily_price, price_per_year')
+          .select('id, name, annual_price, daily_price')
           .in('id', typeIdsFb);
         return data || [];
       })(),
@@ -356,94 +357,17 @@ export default async function Home() {
     tempRes   = _tempRes;
   }
 
-  let wsSeq = 0;
-  const nid = (prefix = '') => `${prefix || 'w'}${Date.now().toString(36)}${(++wsSeq).toString(36)}`;
+  const bookingNotificationsRes = await bookingNotificationsPromise;
+  notifications = bookingNotificationsRes.data || [];
 
-  const chipUnit = (b: any): string =>
-    b.units?.unit_number ??
-    (Array.isArray(b.units) ? b.units[0]?.unit_number : undefined) ??
-    (Array.isArray((b.booking as any)?.units)
-      ? (b.booking as any).units?.[0]?.unit_number
-      : (b.booking as any)?.units?.unit_number) ??
-    '';
-
-  const daysBetween = (aISO: string, bISO: string) => {
-    const ax = new Date(`${aISO}T00:00:00`).getTime();
-    const bx = new Date(`${bISO}T00:00:00`).getTime();
-    return Math.round((ax - bx) / 86400000);
-  };
-
-  const riyadhHour = (() => {
-    try {
-      const parts = new Date().toLocaleTimeString('en-US', {
-        timeZone: 'Asia/Riyadh',
-        hour: '2-digit',
-        hour12: false
-      });
-      return Number(parts.split(':')[0]);
-    } catch {
-      return new Date().getHours();
-    }
-  })();
-
-  const profileName = (() => {
-    try {
-      const raw = (user as any)?.user_metadata?.full_name || (user as any)?.user_metadata?.name;
-      if (raw) return raw;
-    } catch {}
-    return user?.email?.split('@')[0] || 'مستخدم';
-  })();
-
-  const late_payments: WelcomeChip[] = (latePaymentsRaw || [])
-    .filter((inv: any) => inv && inv.booking_id && chipUnit(inv))
-    .map((inv: any) => ({
-      id: nid(`inv${inv.id}_`),
-      unit_number: chipUnit(inv),
-      days: inv.due_date ? Math.max(0, -daysBetween(inv.due_date, todayStr)) : undefined
-    }));
-
-  const expiring_bookings: WelcomeChip[] = (expiringRaw || [])
-    .filter((b: any) => b && chipUnit(b))
-    .map((b: any) => ({
-      id: nid(`exp${b.id}_`),
-      unit_number: chipUnit(b),
-      days: b.check_out ? Math.max(0, daysBetween(b.check_out, todayStr)) : undefined
-    }));
-
-  const overdue_chips = (arr: any[], dateKey: 'check_out' | 'check_in', prefix: string): WelcomeChip[] =>
-    (arr || [])
-      .filter((b: any) => b && chipUnit(b))
-      .map((b: any) => ({
-        id: nid(`${prefix}${b.id}_`),
-        unit_number: chipUnit(b),
-        days: b[dateKey] ? Math.max(0, -daysBetween(b[dateKey], todayStr)) : undefined
-      }));
-
-  const today_chips = (arr: any[], prefix: string): WelcomeChip[] =>
-    (arr || [])
-      .filter((b: any) => b && chipUnit(b))
-      .map((b: any) => ({
-        id: nid(`${prefix}${b.id}_`),
-        unit_number: chipUnit(b)
-      }));
-
-  const welcomeData: WelcomeSummaryData = {
-    language: language as any,
-    user_name: profileName,
-    greeting_hour: riyadhHour,
-    late_payments,
-    expiring_bookings,
-    overdue_checkouts: overdue_chips(overdueCheckouts, 'check_out', 'ovr'),
-    today_checkouts: today_chips(departuresToday, 'tout'),
-    today_arrivals: today_chips(arrivalsToday, 'tin')
-  };
-
+  measurement.mark('fallback_queries');
   const typeMap = new Map<string, any>();
   (typesData || []).forEach((t: any) => typeMap.set(t.id, t));
 
   // ==========================================
   // BATCH 4: تجهيز التذكيرات — استعلام واحد جماعي بدل حلقة N+1
   // ==========================================
+  measurement.mark('type_mapping');
   const reminderBookingIds = Array.from(new Set([
     ...((delayedBookings || []).map((b: any) => b.id)),
     ...((checkoutBookings || []).map((b: any) => b.id)),
@@ -508,13 +432,20 @@ export default async function Home() {
     (async () => { try { await supabase.from('system_events').insert(reminderInserts); } catch {} })();
   }
 
+  measurement.mark('reminders');
   // ==========================================
   // إعداد الإيرادات والرسوم البيانية
   // ==========================================
   let totalRevenue = 0;
   let chartData: { date: string; amount: number }[] = [];
   if (hotelRevenueRes && hotelRevenueRes.mode === 'per-hotel') {
-    totalRevenue = (hotelRevenueRes.monthData || []).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+    // Bound RPC rows too: its monthData query currently has only a lower limit.
+    totalRevenue = (hotelRevenueRes.monthData || [])
+      .filter((p: any) => {
+        const date = String(p.payment_date || '').slice(0, 10);
+        return date >= startOfMonthStr && date < endOfMonthExclusiveStr;
+      })
+      .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
     chartData = last7Days.map((date) => ({
       date: new Date(date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
       amount:
@@ -701,259 +632,30 @@ export default async function Home() {
     ? `${topRevenueDay.date} — ${currencyFormatter.format(topRevenueDay.amount)}`
     : `${occupancyRate}%`;
 
+  measurement.mark('view_processing');
+  measurement.finish({
+    mode: rpcMode,
+    snapshot_error_code: snapshotErrorCode,
+    hotel_scope: selectedHotelId === 'all' ? 'all' : 'single',
+    units: units.length,
+    recent_bookings: bookings.length,
+    revenue_mode: String(hotelRevenueRes?.mode || 'unknown'),
+  });
   return (
     <div className="space-y-6 sm:space-y-8 bg-[#f8fafc] min-h-screen rounded-xl p-3 sm:p-6 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] pb-20 sm:pb-6">
-      {/* بطاقة الترحيب — أولاً عند فتح النظام */}
-      <WelcomeSummary data={welcomeData} />
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-700">
-        <div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{t('لوحة التحكم', 'Dashboard')}</h2>
-            <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
-              <Clock size={16} className="text-blue-500" />
-              <span className="font-medium text-gray-700">{t('أهلاً بك مجدداً.', 'Welcome back.')}</span> {t('إليك ملخص العمليات لليوم.', 'Here is today’s operations summary.')}
-            </p>
-        </div>
-        <div className="flex w-full sm:w-auto gap-2 sm:gap-3">
-            <Link
-              href={`/reports/daily?date=${todayStr}&autoprint=1`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 rounded-xl text-[11px] sm:text-sm font-extrabold text-emerald-900 hover:from-emerald-100 hover:ring-emerald-300/70 transition-all shadow-sm whitespace-nowrap"
-            >
-              <Download size={16} className="sm:w-[18px] sm:h-[18px]" />
-              {t('تقرير اليوم', 'Today report')}
-            </Link>
-            {!isMarketing && (
-              <>
-                <Link 
-                  href="/bookings"
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-xl text-[11px] sm:text-sm font-extrabold hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all shadow-lg shadow-emerald-200 whitespace-nowrap"
-                >
-                  <Plus size={16} className="sm:w-[18px] sm:h-[18px]" />
-                  {t('حجز جديد', 'New booking')}
-                </Link>
-                <div
-                  aria-disabled
-                  title={t('غير متاح حالياً', 'Not available yet')}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-xl text-[11px] sm:text-sm font-extrabold opacity-50 cursor-not-allowed shadow-lg shadow-emerald-200 whitespace-nowrap"
-                >
-                  <Layers size={16} className="sm:w-[18px] sm:h-[18px]" />
-                  {t('حجز متعدد', 'Group booking')}
-                </div>
-              </>
-            )}
-        </div>
-      </div>
-
-      {/* Reception Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-emerald-50 via-white to-white p-4 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all order-2 md:order-1">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-              <Bell size={18} className="text-emerald-700" />
-              {t('تنبيهات الاستقبال', 'Front desk alerts')}
-            </h3>
-          </div>
-          <div className="space-y-3">
-            {(notifications || []).length > 0 ? (
-              (notifications || []).slice(0, 3).map((item: any) => (
-                <div
-                  key={item.id}
-                  className="flex items-start gap-2 rounded-xl bg-white/70 ring-1 ring-emerald-100/70 px-3 py-2"
-                >
-                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-sm text-gray-800 line-clamp-2 leading-snug">{item.message}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
-                      <Clock size={10} />
-                      {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: timeAgoLocale })}
-                    </p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-gray-500 text-center py-2">{t('لا توجد تنبيهات حالياً', 'No alerts right now')}</p>
-            )}
-          </div>
-        </div>
-
-        <div className="order-1 md:order-2">
-          <GlobalCustomerSearch language={language} />
-        </div>
-
-        <div className="bg-gradient-to-br from-emerald-50 via-white to-white p-4 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all order-3">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-              <Zap size={18} className="text-emerald-700" />
-              {t('أزرار سريعة', 'Quick actions')}
-            </h3>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            {!isMarketing && (
-              <>
-                <Link
-                  href="/bookings"
-                  className="flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-br from-emerald-700 via-emerald-800 to-emerald-900 py-3 text-xs font-extrabold text-white hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-center p-2 shadow-sm hover:shadow-md"
-                >
-                  <CalendarCheck size={18} className="text-white/90 mb-1" />
-                  {t('حجز جديد', 'New booking')}
-                </Link>
-                <div
-                  aria-disabled
-                  title={t('غير متاح حالياً', 'Not available yet')}
-                  className="flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-br from-emerald-700 via-emerald-800 to-emerald-900 py-3 text-xs font-extrabold text-white cursor-not-allowed opacity-50 text-center p-2 shadow-sm"
-                >
-                  <Layers size={18} className="text-white/90 mb-1" />
-                  {t('حجز متعدد', 'Group booking')}
-                </div>
-                <Link
-                  href="/bookings-list"
-                  className="flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-br from-emerald-50 via-white to-white py-3 text-xs font-extrabold text-emerald-900 hover:from-emerald-100 transition-all text-center p-2 ring-1 ring-emerald-200/70"
-                >
-                  <ArrowRight size={18} className="text-emerald-800 rotate-180 mb-1" />
-                  {t('سجل الحجوزات', 'Bookings log')}
-                </Link>
-              </>
-            )}
-            <Link
-              href="/customers"
-              className="flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-br from-emerald-50 via-white to-white py-3 text-xs font-extrabold text-emerald-900 hover:from-emerald-100 transition-all text-center p-2 ring-1 ring-emerald-200/70"
-            >
-              <Users size={18} className="text-emerald-800 mb-1" />
-              {t('العملاء', 'Customers')}
-            </Link>
-            {!isMarketing && (
-              <Link
-                href="/units"
-                className="flex flex-col items-center justify-center gap-1 rounded-xl bg-gradient-to-br from-emerald-50 via-white to-white py-3 text-xs font-extrabold text-emerald-900 hover:from-emerald-100 transition-all text-center p-2 ring-1 ring-emerald-200/70"
-              >
-                <BedDouble size={18} className="text-emerald-800 mb-1" />
-                {t('الوحدات', 'Units')}
-              </Link>
-            )}
-          </div>
-        </div>
-
-        {!isReceptionist && !isMarketing && (
-        <div className="bg-gradient-to-br from-emerald-50 via-white to-white p-4 rounded-2xl ring-1 ring-emerald-100/70 shadow-sm hover:shadow-md hover:ring-emerald-200/70 transition-all order-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-              <CreditCard size={18} className="text-emerald-600" />
-              {t('المالية', 'Finance')}
-            </h3>
-          </div>
-          <div className="space-y-2 sm:space-y-3">
-            <Link
-              href="/invoices"
-              className="flex items-center justify-between rounded-xl ring-1 ring-emerald-200/70 bg-gradient-to-r from-emerald-50 via-white to-white px-3 py-2.5 text-xs font-extrabold text-emerald-900 hover:from-emerald-100 transition-all"
-            >
-              <span className="flex items-center gap-2">
-                <FileText size={16} className="text-emerald-600 shrink-0" />
-                <span>{t('إدارة الفواتير', 'Manage invoices')}</span>
-              </span>
-              <ArrowRight size={14} className="text-gray-400 rotate-180 shrink-0" />
-            </Link>
-            <Link
-              href="/payments"
-              className="flex items-center justify-between rounded-xl ring-1 ring-emerald-200/70 bg-gradient-to-r from-emerald-50 via-white to-white px-3 py-2.5 text-xs font-extrabold text-emerald-900 hover:from-emerald-100 transition-all"
-            >
-              <span className="flex items-center gap-2">
-                <DollarSign size={16} className="text-emerald-600 shrink-0" />
-                <span>{t('تسجيل المدفوعات', 'Record payments')}</span>
-              </span>
-              <ArrowRight size={14} className="text-gray-400 rotate-180 shrink-0" />
-            </Link>
-            <Link
-              href="/bookings"
-              className="flex items-center justify-between rounded-xl ring-1 ring-emerald-200/70 bg-gradient-to-r from-emerald-50 via-white to-white px-3 py-2.5 text-xs font-extrabold text-emerald-900 hover:from-emerald-100 transition-all"
-            >
-              <span className="flex items-center gap-2">
-                <CalendarCheck size={16} className="text-emerald-600 shrink-0" />
-                <span>{t('إدارة الحجوزات', 'Manage bookings')}</span>
-              </span>
-              <ArrowRight size={14} className="text-gray-400 rotate-180 shrink-0" />
-            </Link>
-          </div>
-        </div>
-        )}
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-        {!isReceptionist && !isMarketing && (
-          <KPICard 
-              title={t('إيرادات الشهر', 'Monthly revenue')} 
-              value={currencyFormatter.format(totalRevenue)} 
-              change="+12%" 
-              trend="up" 
-              icon={TrendingUp}
-              color="green"
-              tone="emerald"
-              description={t('إجمالي الإيرادات المحصلة (صندوق/بنك)', 'Total collected revenue (cash/bank)')}
-          />
-        )}
-        <KPICard 
-            title={t('نسبة الإشغال', 'Occupancy')} 
-            value={`${occupancyRate}%`} 
-            change="8%" 
-            trend="up" 
-            icon={BedDouble}
-            color="blue"
-            tone="emerald"
-            description={t('نسبة الوحدات المشغولة حالياً', 'Share of units currently occupied')}
-        />
-        <KPICard 
-            title={t('النزلاء حالياً', 'Guests now')} 
-            value={activeBookingsCount.toString()} 
-            change="2" 
-            trend="up" 
-            icon={Users}
-            color="purple"
-            tone="emerald"
-            description={t('عدد الحجوزات النشطة', 'Number of active bookings')}
-        />
-        <KPICard 
-            title={t('وصول اليوم', 'Arrivals today')} 
-            value={(pendingArrivalsCount || 0).toString()} 
-            change="-" 
-            trend="neutral" 
-            icon={CalendarCheck}
-            color="orange"
-            tone="emerald"
-            description={t('حجوزات متوقع وصولها اليوم', 'Bookings expected to arrive today')}
-        />
-      </div>
-
-      {/* Charts Section */}
-      {!isReceptionist && !isMarketing && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          <div className="lg:col-span-2">
-            <RevenueChart data={chartData} language={language} />
-          </div>
-          <div className="bg-gradient-to-br from-emerald-50 via-white to-white rounded-2xl p-8 text-emerald-950 shadow-sm ring-1 ring-emerald-100/70 hover:shadow-md hover:ring-emerald-200/70 transition-all relative overflow-hidden group">
-            <div className="absolute -right-10 -bottom-10 opacity-[0.06] text-emerald-900 group-hover:scale-110 transition-transform duration-700">
-              <TrendingUp size={240} />
-            </div>
-            <div className="relative z-10 h-full flex flex-col">
-              <h3 className="text-xl font-bold mb-2">{t('نصيحة اليوم 💡', 'Tip of the day')}</h3>
-              <p className="text-emerald-900/70 text-sm leading-relaxed mb-8">{dailyTipText}</p>
-              <div className="mt-auto">
-                <div className="bg-white/70 backdrop-blur-md rounded-xl p-4 ring-1 ring-emerald-100/70">
-                  <p className="text-xs text-emerald-900/70 mb-1">{dailyTipHighlightLabel}</p>
-                  <p className="font-extrabold text-emerald-950">{dailyTipHighlightValue}</p>
-                </div>
-              </div>
-              <button className="mt-6 flex items-center justify-center gap-2 w-full py-3 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-xl font-extrabold text-sm hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all shadow-sm hover:shadow-md">
-                {t('عرض التقارير التفصيلية', 'View detailed reports')}
-                <ArrowRight size={18} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      <DashboardOverview
+        language={language}
+        today={todayStr}
+        isReceptionist={isReceptionist}
+        isMarketing={isMarketing}
+        revenue={currencyFormatter.format(totalRevenue)}
+        occupancyRate={occupancyRate}
+        activeBookings={activeBookingsCount}
+        arrivals={pendingArrivalsCount || 0}
+        notifications={notifications || []}
+        chartData={chartData}
+        dailyTip={dailyTipText}
+      />
       {/* Main Content Grid */}
       <div className="space-y-4 sm:space-y-8">
         <RoomStatusWithDate initialUnits={units} language={language} hotelId={selectedHotelId} />

@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, RefreshCw, AlertCi
 import { addDays, addMonths, endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { measureDashboard } from '@/lib/dashboard-performance';
 
 function toYMD(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
@@ -30,9 +31,10 @@ export default function RoomStatusWithDate({
 }) {
   const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
   const [selectedDate, setSelectedDate] = useState<string>(toYMD(new Date()));
-  const [units, setUnits] = useState<Unit[]>(initialUnits);
-  const unitsRef = useRef<Unit[]>(initialUnits);
-  const [loading, setLoading] = useState(false);
+  // Server dashboard rows are only a summary, not a complete room snapshot.
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [unitTypes, setUnitTypes] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedUnitTypeId, setSelectedUnitTypeId] = useState<string>('all');
@@ -53,23 +55,17 @@ export default function RoomStatusWithDate({
     });
     return m;
   });
-  const emptyUnitsRetryRef = useRef(0);
-  const emptyUnitsKeyRef = useRef<string>('');
-  const loadingRef = useRef(false);
   const selectedDateRef = useRef(selectedDate);
   const hotelIdRef = useRef(hotelId);
-  const inFlightKeyRef = useRef<string>('');
+  const requestIdRef = useRef(0);
+  const requestRef = useRef<{ id: number; key: string; controller: AbortController } | null>(null);
   const typeInfoMapRef = useRef(typeInfoMap);
 
   useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
   useEffect(() => { hotelIdRef.current = hotelId; }, [hotelId]);
-  useEffect(() => { loadingRef.current = loading; }, [loading]);
   useEffect(() => {
     typeInfoMapRef.current = typeInfoMap;
   }, [typeInfoMap]);
-  useEffect(() => {
-    unitsRef.current = units;
-  }, [units]);
   const WINDOW_SIZE = 20;
   const [windowStart, setWindowStart] = useState<Date>(() => {
     const d = new Date();
@@ -97,46 +93,74 @@ export default function RoomStatusWithDate({
   }, [windowStart]);
 
   useEffect(() => {
-    setUnits(initialUnits || []);
-    setError(null);
+    // Refresh metadata without replacing complete room data with summary rows.
     const m = new Map<string, { unit_type_name?: string; annual_price?: number }>();
     (initialUnits || []).forEach(u => {
       const annualRaw = (u as any).annual_price;
       const annualNum = annualRaw == null ? NaN : Number(annualRaw);
       m.set(u.id, { unit_type_name: u.unit_type_name, annual_price: Number.isFinite(annualNum) ? annualNum : undefined });
     });
-    setTypeInfoMap(m);
+    setTypeInfoMap(previous => new Map([...previous, ...m]));
   }, [initialUnits]);
 
   useEffect(() => {
     setSelectedUnitTypeId('all');
     setError(null);
-    emptyUnitsRetryRef.current = 0;
-    emptyUnitsKeyRef.current = '';
   }, [hotelId]);
 
-  const load = useCallback(async (isAutoRetry = false, preserveEmpty = false) => {
-    const curHotel = hotelIdRef.current;
-    const curDate = selectedDateRef.current;
+  const load = useCallback(async (isBackground = false) => {
+    const curHotel = hotelId;
+    const curDate = selectedDate;
     const key = `${curHotel ?? 'all'}__${curDate}`;
-    if (inFlightKeyRef.current === key && !isAutoRetry) return;
-    if (preserveEmpty && loadingRef.current) return;
-    inFlightKeyRef.current = key;
-    loadingRef.current = true;
+    if (requestRef.current?.key === key && !requestRef.current.controller.signal.aborted) return;
+    requestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const id = ++requestIdRef.current;
+    requestRef.current = { id, key, controller };
+    const isCurrent = () => requestRef.current?.id === id &&
+      curDate === selectedDateRef.current && curHotel === hotelIdRef.current;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 20000);
+    const measurement = measureDashboard('units');
+    let outcome = 'error';
+    let unitCount = 0;
+    let attempts = 0;
     setLoading(true);
     setError(null);
     try {
-        const { data: snapshot, error: snapshotError } = await supabase.rpc('get_room_status_snapshot', {
-          p_hotel_id: curHotel && curHotel !== 'all' ? curHotel : null,
-          p_date: curDate
-        });
+        let snapshot: any = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          attempts++;
+          let snapshotError: unknown = null;
+          try {
+            const result = await supabase.rpc('get_room_status_snapshot', {
+              p_hotel_id: curHotel && curHotel !== 'all' ? curHotel : null,
+              p_date: curDate
+            }).abortSignal(controller.signal);
+            snapshot = result.data;
+            snapshotError = result.error;
+          } catch (err) {
+            snapshotError = err;
+          }
+          if (!isCurrent()) { outcome = 'stale'; return; }
+          if (timedOut) throw new Error(t('انتهت مهلة الاتصال. أعد المحاولة.', 'Connection timed out. Please retry.'));
+          if (controller.signal.aborted) { outcome = 'cancelled'; return; }
+          if (!snapshotError) break;
+          if (attempt === 1) throw snapshotError;
+        }
 
-        if (snapshotError) throw snapshotError;
-        if (!snapshot || (snapshot as any)?.ok === false) {
+        measurement.mark('snapshot_request');
+        const requiredLists = ['units', 'unit_types', 'active', 'arrivals', 'departures', 'overdue',
+          'upcoming', 'checked_out', 'temporary_reservations', 'unpaid_invoices', 'invoice_totals'];
+        if (!snapshot || snapshot.ok !== true || requiredLists.some(field => !Array.isArray(snapshot[field]))) {
           throw new Error('room_status_snapshot_failed');
         }
 
         const unitsData = (((snapshot as any)?.units ?? []) as any[]);
+        unitCount = unitsData.length;
         const typesData = (((snapshot as any)?.unit_types ?? []) as any[]);
         const activeForDate = (((snapshot as any)?.active ?? []) as any[]);
         const arrivals = (((snapshot as any)?.arrivals ?? []) as any[]);
@@ -149,16 +173,11 @@ export default function RoomStatusWithDate({
         const invoiceTotals = (((snapshot as any)?.invoice_totals ?? []) as any[]);
 
         if (!unitsData || unitsData.length === 0) {
-          const hadUnitsBefore = (unitsRef.current || []).length > 0 || (initialUnits || []).length > 0;
-          if (hadUnitsBefore) {
-            setLoading(false);
-            return;
-          }
-          if (!isAutoRetry) {
-            setTimeout(() => load(true, true), 1400);
-            return;
-          }
-          setError(t('لا توجد وحدات لهذا الفندق أو لا توجد صلاحية للعرض.', 'No units for this hotel or no permission to view.'));
+          outcome = 'empty';
+          setUnits([]);
+          setLoadedKey(key);
+          setUnitTypes([]);
+          setUnitTypesIssue(null);
           return;
         }
 
@@ -382,15 +401,26 @@ export default function RoomStatusWithDate({
             .filter((b: any) => b.unit_id === u.id)
             .map((b: any) => ({ start: b.check_in, end: b.check_out }));
 
+          const PRELIMINARY_SET = new Set(['preliminary', 'pending']);
           let status = u.status;
           if (active) {
-            status = String(active.booking_status || '').toLowerCase() === 'checked_in' ? 'occupied' : 'booked';
+            const anyActive = active as any;
+            const bStatusRaw = String(anyActive?.booking_status || anyActive?.status || anyActive?.bookingState || '').toLowerCase();
+            if (bStatusRaw === 'checked_in') {
+              status = 'occupied';
+            } else if (PRELIMINARY_SET.has(bStatusRaw)) {
+              status = 'preliminary';
+            } else {
+              status = 'booked';
+            }
           } else {
             if (!['maintenance', 'cleaning', 'unavailable'].includes(status)) status = 'available';
           }
           const up = !active ? upcomingMap.get(u.id) : null;
           if (!active && status === 'available' && up) {
-            status = 'future_booked';
+            const anyUp = up as any;
+            const upStatusRaw = String(anyUp?.booking_status || anyUp?.status || anyUp?.bookingState || '').toLowerCase();
+            status = PRELIMINARY_SET.has(upStatusRaw) ? 'future_preliminary' : 'future_booked';
           }
           const nested = u.unit_type;
           const fb = typeInfoMapRef.current.get(u.id);
@@ -438,9 +468,15 @@ export default function RoomStatusWithDate({
             payment_invoice_paid: invPaid,
             payment_invoice_remaining: invRemaining,
             remaining_days: (() => {
-              if ((status === 'occupied' || status === 'booked') && active?.check_out) {
+              if ((status === 'occupied' || status === 'booked' || status === 'preliminary') && (active?.check_out || (up as any)?.check_out)) {
                 const sd = new Date(selectedDate);
-                const co = new Date(active.check_out);
+                const co = new Date(active?.check_out || (up as any)?.check_out);
+                const diff = Math.ceil((co.getTime() - sd.getTime()) / (1000 * 60 * 60 * 24));
+                return diff >= 0 ? diff : 0;
+              }
+              if ((status === 'future_booked' || status === 'future_preliminary') && (up as any)?.check_out) {
+                const sd = new Date(selectedDate);
+                const co = new Date((up as any).check_out);
                 const diff = Math.ceil((co.getTime() - sd.getTime()) / (1000 * 60 * 60 * 24));
                 return diff >= 0 ? diff : 0;
               }
@@ -478,8 +514,15 @@ export default function RoomStatusWithDate({
           }
         }
 
+        measurement.mark('processing');
+        outcome = 'success';
         setUnits(mapped);
+        setLoadedKey(key);
       } catch (err: any) {
+        if (!isCurrent() || (controller.signal.aborted && !timedOut)) {
+          outcome = 'stale';
+          return;
+        }
         console.error('RoomStatusWithDate load error details:', {
           message: err?.message || 'No message',
           code: err?.code || 'No code',
@@ -487,84 +530,34 @@ export default function RoomStatusWithDate({
           full: err
         });
 
-        const hasAnyUnits = (unitsRef.current || []).length > 0 || (initialUnits || []).length > 0;
-        if (hasAnyUnits) {
-          setLoading(false);
-          return;
-        }
-
-        if (!isAutoRetry) {
-          const retryDelay = 1200;
-          setTimeout(() => load(true, true), retryDelay);
-          return;
-        }
-
         const errorMsg = err?.message || String(err) || t('حدث خطأ غير معروف', 'Unknown error');
         setError(`${t('حدث خطأ أثناء تحميل حالة الوحدات:', 'Error loading units:')} ${errorMsg}`);
       } finally {
-        loadingRef.current = false;
-        inFlightKeyRef.current = '';
-        setLoading(false);
+        clearTimeout(timeout);
+        measurement.finish({
+          outcome,
+          units: unitCount,
+          date: curDate,
+          hotel_scope: curHotel && curHotel !== 'all' ? 'single' : 'all',
+          background_or_retry: isBackground,
+          attempts,
+          selection_changed: curDate !== selectedDateRef.current || curHotel !== hotelIdRef.current,
+        });
+        if (isCurrent()) {
+          requestRef.current = null;
+          setLoading(false);
+        }
       }
-  }, [language]);
-
-  const initialUnitsSignature = useMemo(() => {
-    if (!Array.isArray(initialUnits) || initialUnits.length === 0) return '';
-    return `${initialUnits.length}:${initialUnits[0]?.id ?? ''}:${String((initialUnits[0] as any)?.next_action ?? '')}`;
-  }, [initialUnits]);
+  }, [language, selectedDate, hotelId]);
 
   useEffect(() => {
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-
-    const hasRichFields =
-      Array.isArray(initialUnits) &&
-      initialUnits.length > 0 &&
-      initialUnits.some((u) =>
-        (u.next_action != null) ||
-        (u.booking_id != null) ||
-        (u.payment_due_status != null) ||
-        (u.guest_name != null) ||
-        (u.has_temp_res === true) ||
-        (u.remaining_days != null)
-      );
-
-    const initialUnitsValid =
-      Array.isArray(initialUnits) &&
-      initialUnits.length > 0 &&
-      selectedDate === todayStr &&
-      (
-        hasRichFields ||
-        units.length === initialUnits.length
-      );
-
-    if (initialUnitsValid) {
-      const typeMap = new Map<string, { id: string; name: string }>();
-      initialUnits.forEach((u) => {
-        if (u.unit_type_id && u.unit_type_name) {
-          typeMap.set(u.unit_type_id, { id: u.unit_type_id, name: u.unit_type_name });
-        }
-      });
-      const list = Array.from(typeMap.values()).sort((a, b) =>
-        a.name.localeCompare(b.name, language === 'en' ? 'en' : 'ar')
-      );
-      if (list.length > 0) {
-        setUnitTypes(list);
-        setUnitTypesIssue(null);
-      }
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    (async () => {
-      await load();
-      if (cancelled) return;
-    })();
+    void load();
     return () => {
-      cancelled = true;
+      const request = requestRef.current;
+      requestRef.current = null;
+      request?.controller.abort();
     };
-  }, [selectedDate, hotelId, initialUnitsSignature, language, load]);
+  }, [initialUnits, load]);
 
   useEffect(() => {
     const THROTTLE_WINDOW_MS = 300000; // 5 دقائق على الأقل بين إعادة تحميل بسبب focus/visibility
@@ -576,7 +569,7 @@ export default function RoomStatusWithDate({
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         lastRunTs = Date.now();
-        load(true, true);
+        void load(true);
       }, 350);
     };
     const onVisibility = () => {
@@ -603,7 +596,7 @@ export default function RoomStatusWithDate({
       timeoutId = setTimeout(() => {
         if (now - lastReloadTs < THROTTLE_MS) return;
         lastReloadTs = Date.now();
-        load(true, true);
+        void load(true);
       }, DEBOUNCE_MS);
     };
     const ch = supabase
@@ -691,6 +684,7 @@ export default function RoomStatusWithDate({
   };
 
   const unitsForGrid = useMemo(() => {
+    if (loadedKey !== `${hotelId ?? 'all'}__${selectedDate}`) return [];
     let list = units;
     if (selectedUnitTypeId !== 'all') {
       list = list.filter(u => (u.unit_type_id || '') === selectedUnitTypeId);
@@ -699,7 +693,7 @@ export default function RoomStatusWithDate({
       list = list.filter(u => (u.status === 'occupied' || u.status === 'booked') && typeof u.remaining_days === 'number' && u.remaining_days <= 7);
     }
     return list;
-  }, [units, selectedUnitTypeId, extensionGraceOnly]);
+  }, [units, loadedKey, hotelId, selectedDate, selectedUnitTypeId, extensionGraceOnly]);
 
   const opsPdfData = useMemo(() => {
     const list = unitsForGrid || [];
@@ -1068,20 +1062,21 @@ export default function RoomStatusWithDate({
           `}</style>
         </div>
       )}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <section data-room-toolbar className="min-w-0 rounded-2xl border border-stone-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b border-stone-200/80 bg-[#faf9f6] px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2">
           <div ref={calendarRef} className="relative">
             <button
               type="button"
               onClick={() => setCalendarOpen((v) => !v)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 shadow-sm hover:shadow-md hover:ring-emerald-300/70 transition-all"
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white ring-1 ring-stone-200 shadow-none hover:ring-emerald-300 transition-colors"
               aria-haspopup="dialog"
               aria-expanded={calendarOpen}
             >
               <CalendarIcon size={18} className="text-emerald-700" />
               <div className="text-right">
-                <div className="text-[11px] text-emerald-900/70 font-bold">{t('التاريخ', 'Date')}</div>
-                <div className="text-[12px] sm:text-sm font-extrabold text-emerald-950">
+                <div className="text-[11px] text-stone-500 font-bold">{t('التاريخ', 'Date')}</div>
+                <div className="text-[12px] sm:text-sm font-semibold text-stone-800">
                   {new Date(`${selectedDate}T00:00:00`).toLocaleDateString(language === 'en' ? 'en-US' : 'ar-SA', {
                     weekday: 'short',
                     year: 'numeric',
@@ -1093,19 +1088,19 @@ export default function RoomStatusWithDate({
             </button>
 
             {calendarOpen && (
-              <div className="absolute z-40 mt-2 w-[320px] sm:w-[360px] rounded-2xl bg-white shadow-xl ring-1 ring-emerald-200/70 overflow-hidden">
-                <div className="px-3 py-3 bg-gradient-to-br from-emerald-50 via-white to-white border-b border-emerald-100/70">
+              <div className="absolute z-40 mt-2 w-[320px] sm:w-[360px] rounded-2xl bg-white shadow-xl ring-1 ring-stone-200 overflow-hidden">
+                <div className="px-3 py-3 bg-stone-50 border-b border-stone-200/80">
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => setCalendarMonth((m) => startOfMonth(addMonths(m, -1)))}
-                      className="p-2 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-900 hover:bg-emerald-50 transition-colors"
+                      className="p-2 rounded-xl ring-1 ring-stone-200 bg-white text-stone-700 hover:bg-emerald-50 transition-colors"
                       aria-label={t('الشهر السابق', 'Previous month')}
                     >
                       <ChevronRight size={18} />
                     </button>
                     <div className="text-center flex-1">
-                      <div className="text-sm font-extrabold text-emerald-950">
+                      <div className="text-sm font-semibold text-stone-800">
                         {calendarMonth.toLocaleDateString(language === 'en' ? 'en-US' : 'ar-SA', { month: 'long', year: 'numeric' })}
                       </div>
                       <div className="mt-2 flex items-center justify-center gap-2">
@@ -1115,14 +1110,14 @@ export default function RoomStatusWithDate({
                             setSelectedDate(toYMD(new Date()));
                             setCalendarOpen(false);
                           }}
-                          className="px-3 py-1.5 rounded-xl bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white text-[11px] font-extrabold hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all shadow-sm"
+                          className="px-3 py-1.5 rounded-xl bg-emerald-900 text-white text-[11px] font-semibold hover:bg-emerald-800 transition-colors shadow-sm"
                         >
                           {t('اليوم', 'Today')}
                         </button>
                         <button
                           type="button"
                           onClick={() => setCalendarOpen(false)}
-                          className="px-3 py-1.5 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-900 text-[11px] font-extrabold hover:bg-emerald-50 transition-colors"
+                          className="px-3 py-1.5 rounded-xl ring-1 ring-stone-200 bg-white text-stone-700 text-[11px] font-semibold hover:bg-emerald-50 transition-colors"
                         >
                           {t('إغلاق', 'Close')}
                         </button>
@@ -1131,7 +1126,7 @@ export default function RoomStatusWithDate({
                     <button
                       type="button"
                       onClick={() => setCalendarMonth((m) => startOfMonth(addMonths(m, 1)))}
-                      className="p-2 rounded-xl ring-1 ring-emerald-200/70 bg-white/70 text-emerald-900 hover:bg-emerald-50 transition-colors"
+                      className="p-2 rounded-xl ring-1 ring-stone-200 bg-white text-stone-700 hover:bg-emerald-50 transition-colors"
                       aria-label={t('الشهر التالي', 'Next month')}
                     >
                       <ChevronLeft size={18} />
@@ -1140,7 +1135,7 @@ export default function RoomStatusWithDate({
                 </div>
 
                 <div className="p-3">
-                  <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-extrabold text-emerald-900/70 mb-2" dir="ltr">
+                  <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-stone-500 mb-2" dir="ltr">
                     {Array.from({ length: 7 }).map((_, i) => {
                       const base = startOfWeek(new Date(), { weekStartsOn: 0 });
                       const d = addDays(base, i);
@@ -1173,14 +1168,14 @@ export default function RoomStatusWithDate({
                                 setCalendarOpen(false);
                               }}
                               className={cn(
-                                'h-9 sm:h-10 rounded-xl text-[12px] sm:text-sm font-extrabold transition-all',
+                                'h-9 sm:h-10 rounded-xl text-[12px] sm:text-sm font-semibold transition-colors',
                                 isSelected &&
-                                  'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm',
+                                  'bg-emerald-900 text-white shadow-sm',
                                 !isSelected &&
                                   (isInMonth
-                                    ? 'text-emerald-950 hover:bg-emerald-50'
+                                    ? 'text-stone-800 hover:bg-emerald-50'
                                     : 'text-gray-400 hover:bg-emerald-50/70'),
-                                !isSelected && isToday && 'ring-2 ring-emerald-400/50 bg-emerald-50'
+                                !isSelected && isToday && 'ring-2 ring-emerald-600/40 bg-emerald-50'
                               )}
                             >
                               {d.getDate()}
@@ -1195,10 +1190,10 @@ export default function RoomStatusWithDate({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 rounded-xl border border-stone-200 bg-white p-1">
           <button
             onClick={() => setSelectedDate(toYMD(new Date()))}
-            className="px-2.5 py-1.5 text-xs rounded-xl ring-1 ring-emerald-200/70 bg-white/70 hover:bg-emerald-50 text-emerald-900 font-extrabold transition-colors"
+            className="px-2.5 py-1.5 text-xs rounded-xl ring-1 ring-stone-200 bg-white hover:bg-emerald-50 text-stone-700 font-semibold transition-colors"
             aria-label={t('اليوم', 'Today')}
           >
             {t('اليوم', 'Today')}
@@ -1209,7 +1204,7 @@ export default function RoomStatusWithDate({
               d.setDate(d.getDate() + 1);
               setSelectedDate(toYMD(d));
             }}
-            className="px-2.5 py-1.5 text-xs rounded-xl ring-1 ring-emerald-200/70 bg-white/70 hover:bg-emerald-50 text-emerald-900 font-extrabold transition-colors"
+            className="px-2.5 py-1.5 text-xs rounded-xl ring-1 ring-stone-200 bg-white hover:bg-emerald-50 text-stone-700 font-semibold transition-colors"
             aria-label={t('غداً', 'Tomorrow')}
           >
             {t('غداً', 'Tomorrow')}
@@ -1220,34 +1215,34 @@ export default function RoomStatusWithDate({
               d.setDate(d.getDate() - 1);
               setSelectedDate(toYMD(d));
             }}
-            className="px-2.5 py-1.5 text-xs rounded-xl ring-1 ring-emerald-200/70 bg-white/70 hover:bg-emerald-50 text-emerald-900 font-extrabold transition-colors"
+            className="px-2.5 py-1.5 text-xs rounded-xl ring-1 ring-stone-200 bg-white hover:bg-emerald-50 text-stone-700 font-semibold transition-colors"
             aria-label={t('أمس', 'Yesterday')}
           >
             {t('أمس', 'Yesterday')}
           </button>
         </div>
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-full">
+      <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-4 sm:px-5">
+        <div className="relative min-w-0 max-w-full flex-1">
           <div className="hidden sm:block absolute left-0 top-1/2 -translate-y-1/2 z-10">
             <button
               onClick={() => scrollStrip('left')}
-              className="p-2 rounded-full bg-white/80 ring-1 ring-emerald-200/70 shadow-sm hover:bg-emerald-50 transition-colors"
+              className="p-2 rounded-full bg-white ring-1 ring-stone-200 shadow-sm hover:bg-emerald-50 transition-colors"
               aria-label="Scroll left"
             >
-              <ChevronRight size={18} className="text-emerald-900" />
+              <ChevronRight size={18} className="text-stone-700" />
             </button>
           </div>
           <div className="hidden sm:block absolute right-0 top-1/2 -translate-y-1/2 z-10">
             <button
               onClick={() => scrollStrip('right')}
-              className="p-2 rounded-full bg-white/80 ring-1 ring-emerald-200/70 shadow-sm hover:bg-emerald-50 transition-colors"
+              className="p-2 rounded-full bg-white ring-1 ring-stone-200 shadow-sm hover:bg-emerald-50 transition-colors"
               aria-label="Scroll right"
             >
-              <ChevronLeft size={18} className="text-emerald-900" />
+              <ChevronLeft size={18} className="text-stone-700" />
             </button>
           </div>
-          <div className="overflow-hidden rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-r from-emerald-50 via-white to-emerald-50 edge-fade">
+          <div className="overflow-hidden rounded-xl bg-stone-50 edge-fade">
             <div
               ref={stripRef}
               className="no-scrollbar flex gap-1 overflow-x-auto overflow-y-hidden pb-1 snap-x snap-mandatory px-2 py-1"
@@ -1269,23 +1264,23 @@ export default function RoomStatusWithDate({
                     data-date={ymd}
                 onClick={() => setSelectedDate(ymd)}
                 className={cn(
-                      'min-w-[52px] sm:min-w-[66px] md:min-w-[70px] px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-center transition-all snap-center',
+                      'min-w-[52px] sm:min-w-[66px] md:min-w-[70px] px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-center transition-colors snap-center',
                   active
-                        ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
-                        : 'bg-white/70 text-emerald-950 ring-1 ring-emerald-200/70 hover:bg-emerald-50'
+                        ? 'bg-emerald-900 text-white shadow-sm'
+                        : 'bg-white text-stone-800 ring-1 ring-stone-200 hover:bg-emerald-50'
                 )}
                 title={d.toLocaleDateString(language === 'en' ? 'en-US' : 'ar-EG', { dateStyle: 'full' })}
               >
                     <div className="relative">
                       {rel && (
                         <span className={cn(
-                          "absolute top-0 right-0 translate-y-[-4px] translate-x-1 text-[9px] font-extrabold",
+                          "absolute top-0 right-0 translate-y-[-4px] translate-x-1 text-[9px] font-semibold",
                           active ? "text-white/80" : "text-emerald-700/80"
                         )}>
                           {rel}
                         </span>
                       )}
-                      <div className={cn("text-[9px] sm:text-[10px] md:text-[11px] font-bold", active ? "text-emerald-100" : "text-emerald-900/70")}>{w}</div>
+                      <div className={cn("text-[9px] sm:text-[10px] md:text-[11px] font-bold", active ? "text-emerald-100" : "text-stone-500")}>{w}</div>
                       <div className="text-sm sm:text-base md:text-lg font-bold font-sans">{day}</div>
                     </div>
               </button>
@@ -1295,12 +1290,12 @@ export default function RoomStatusWithDate({
           </div>
         </div>
       </div>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-b-2xl border-t border-stone-200/80 bg-[#faf9f6] px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2 flex-wrap">
           <select
             value={selectedUnitTypeId}
             onChange={(e) => setSelectedUnitTypeId(e.target.value)}
-            className="px-3 sm:px-4 py-2 rounded-xl text-[12px] sm:text-sm font-extrabold bg-gradient-to-r from-emerald-50 via-white to-white text-emerald-950 ring-1 ring-emerald-200/70 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0 transition-all"
+            className="px-3 sm:px-4 py-2 rounded-xl text-[12px] sm:text-sm font-semibold bg-white text-stone-800 ring-1 ring-stone-200 shadow-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0 transition-colors"
           >
             <option value="all">{t('كل النماذج', 'All types')}</option>
             {unitTypes.map((ut) => (
@@ -1312,17 +1307,17 @@ export default function RoomStatusWithDate({
               {unitTypesIssue === 'empty_unit_types' ? t('النماذج غير ظاهرة (صلاحيات؟)', 'Types not visible (permissions?)') : t('تعذر جلب النماذج', 'Failed to load types')}
             </span>
           ) : null}
-          <span className="mx-1 sm:mx-2 text-gray-300">|</span>
+          <span className="mx-1 sm:mx-2 text-stone-200">|</span>
           <select
             value={cardSize}
             onChange={(e) => setCardSize(e.target.value as any)}
-            className="px-3 sm:px-4 py-2 rounded-xl text-[12px] sm:text-sm font-extrabold bg-gradient-to-r from-emerald-50 via-white to-white text-emerald-950 ring-1 ring-emerald-200/70 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0 transition-all"
+            className="px-3 sm:px-4 py-2 rounded-xl text-[12px] sm:text-sm font-semibold bg-white text-stone-800 ring-1 ring-stone-200 shadow-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:ring-offset-0 transition-colors"
           >
             <option value="normal">{t('عادي', 'Normal')}</option>
             <option value="compact">{t('مصغّر', 'Compact')}</option>
             <option value="mini">{t('صغير جداً', 'Mini')}</option>
           </select>
-          <span className="mx-1 sm:mx-2 text-gray-300">|</span>
+          <span className="mx-1 sm:mx-2 text-stone-200">|</span>
           <button
             type="button"
             onClick={() => setExtensionGraceOnly((v) => !v)}
@@ -1339,18 +1334,26 @@ export default function RoomStatusWithDate({
           <button
             type="button"
             onClick={handleOpenOpsPdf}
-            className="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg border text-[12px] sm:text-sm font-black shadow-sm transition-colors whitespace-nowrap bg-gray-900 text-white hover:bg-gray-800 flex items-center gap-2"
+            disabled={loading || !!error || loadedKey !== `${hotelId ?? 'all'}__${selectedDate}`}
+            className="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg border text-[12px] sm:text-sm font-semibold shadow-sm transition-colors whitespace-nowrap bg-emerald-900 text-white hover:bg-emerald-800 flex items-center gap-2"
             title="تجهيز PDF سريع للوضع التشغيلي"
           >
             <FileDown size={16} />
             PDF سريع
           </button>
         </div>
-        <div className="text-xs text-gray-500">
+        <div className="shrink-0 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-600 tabular-nums">
           {t('عدد الوحدات', 'Units')}: {unitsForGrid.length}
         </div>
       </div>
-      <div className={cn('relative', loading && 'opacity-60 pointer-events-none')}>
+      </section>
+      {loading && (
+        <div role="status" className="flex items-center gap-2 px-1 text-xs text-stone-500">
+          <RefreshCw size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          {t('جارٍ تحميل تفاصيل الوحدات...', 'Loading room details...')}
+        </div>
+      )}
+      <div aria-busy={loading} className={cn('relative', loading && 'opacity-60 pointer-events-none')}>
         {error && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl p-6 text-center animate-in fade-in duration-300">
             <div className="bg-red-50 text-red-600 p-4 rounded-full mb-4 shadow-sm">

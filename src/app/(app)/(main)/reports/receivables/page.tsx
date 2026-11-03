@@ -1,21 +1,14 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { Users, ArrowRight, Calendar, Download, ChevronDown as ChevronDownIcon, FileText } from 'lucide-react';
+import ReceivablesReportPrint from '@/components/reports/ReceivablesReportPrint';
+import { riyadhToday, type ReceivableRow as Row } from '@/lib/reports/overdue-receivables';
 import RoleGate from '@/components/auth/RoleGate';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
 import { useUserRole } from '@/hooks/useUserRole';
-
-interface Row {
-  customer_id: string;
-  customer_name: string;
-  invoices_count: number;
-  total_invoiced: number;
-  total_paid: number;
-  total_remaining: number;
-}
 
 export default function ReceivablesReportPage() {
   const { role } = useUserRole();
@@ -40,9 +33,12 @@ export default function ReceivablesReportPage() {
     return new Date().toISOString().split('T')[0];
   });
   const [searchText, setSearchText] = useState('');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [reportScope, setReportScope] = useState({ start: startDate, end: endDate, hotelId: selectedHotelId, asOf: riyadhToday() });
+  const reportController = useRef<AbortController | null>(null);
+  const reportSequence = useRef(0);
 
   useEffect(() => {
-    fetchReport();
     (async () => {
       try {
         const { data } = await supabase.from('hotels').select('id, name');
@@ -66,55 +62,77 @@ export default function ReceivablesReportPage() {
     fetchReport();
   }, [selectedHotelId]);
 
-  const fetchReport = async () => {
-    if (loading) return;
+  useEffect(() => () => { reportController.current?.abort(); }, []);
+
+  const fetchReport = async (mode = overdueOnly) => {
+    reportController.current?.abort();
+    const controller = new AbortController();
+    reportController.current = controller;
+    const sequence = ++reportSequence.current;
     setLoading(true);
+    setRows([]);
+    setDetailsByCustomer({});
+    setExpanded(new Set());
     try {
-      const { data: reportData, error: reportError } = await supabase
-        .rpc('get_receivables_report_v3', {
-          p_start_date: startDate,
-          p_end_date: endDate,
-          p_hotel_id: selectedHotelId === 'all' ? null : selectedHotelId
-        });
+      let list: Row[];
+      let asOf = riyadhToday();
+      if (mode) {
+        const { fetchOverdueReceivables } = await import('@/lib/reports/overdue-receivables');
+        const result = await fetchOverdueReceivables(supabase, selectedHotelId === 'all' ? null : selectedHotelId, controller.signal);
+        list = result.rows;
+        asOf = result.asOf;
+      } else {
+        const { data: reportData, error: reportError } = await supabase
+          .rpc('get_receivables_report_v3', {
+            p_start_date: startDate,
+            p_end_date: endDate,
+            p_hotel_id: selectedHotelId === 'all' ? null : selectedHotelId
+          }).abortSignal(controller.signal);
 
-      if (reportError) throw reportError;
+        if (reportError) throw reportError;
 
-      const list: Row[] = (reportData || []).map((r: any) => ({
-        customer_id: r.customer_id,
-        customer_name: r.customer_name,
-        invoices_count: Number(r.invoices_count || 0),
-        total_invoiced: Number(r.total_invoiced || 0),
-        total_paid: Number(r.total_paid || 0),
-        total_remaining: Number(r.total_remaining || 0)
-      }));
+        list = (reportData || []).map((r: any) => ({
+          customer_id: r.customer_id,
+          customer_name: r.customer_name,
+          invoices_count: Number(r.invoices_count || 0),
+          total_invoiced: Number(r.total_invoiced || 0),
+          total_paid: Number(r.total_paid || 0),
+          total_remaining: Number(r.total_remaining || 0)
+        }));
+
+      }
 
       const contactMap: Record<string, { phone?: string; email?: string; name: string }> = {};
 
       if (list.length > 0) {
         const customerIds = list.map(r => r.customer_id);
-        const { data: customers } = await supabase
-          .from('customers')
-          .select('id, full_name, phone, email')
-          .in('id', customerIds);
-        
-        (customers || []).forEach(c => {
-          contactMap[c.id] = {
-            name: c.full_name,
-            phone: c.phone || undefined,
-            email: c.email || undefined
-          };
-        });
+        for (let offset = 0; offset < customerIds.length; offset += 200) {
+          const { data: customers } = await supabase
+            .from('customers')
+            .select('id, full_name, phone, email')
+            .in('id', customerIds.slice(offset, offset + 200)).abortSignal(controller.signal);
+
+          (customers || []).forEach(c => {
+            contactMap[c.id] = {
+              name: c.full_name,
+              phone: c.phone || undefined,
+              email: c.email || undefined
+            };
+          });
+        }
       }
 
+      if (controller.signal.aborted || sequence !== reportSequence.current) return;
+      setReportScope({ start: startDate, end: endDate, hotelId: selectedHotelId, asOf });
       setRows(list);
       setContactByCustomer(contactMap);
       setSearchText('');
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
+      if (controller.signal.aborted || sequence !== reportSequence.current || err.name === 'AbortError') return;
       console.error('Error building receivables report:', err);
       alert('حدث خطأ أثناء تحميل تقرير المديونية: ' + (err.message || 'خطأ غير معروف'));
     } finally {
-      setLoading(false);
+      if (sequence === reportSequence.current) setLoading(false);
     }
   };
 
@@ -125,15 +143,16 @@ export default function ReceivablesReportPage() {
 
   const fetchCustomerDetails = async (customerId: string) => {
     if (detailsByCustomer[customerId]) return; // Already fetched
-
+    const sequence = reportSequence.current;
     try {
       const { data, error } = await supabase.rpc('get_customer_statement', {
         p_customer_id: customerId,
-        p_start_date: startDate,
-        p_end_date: endDate
+        p_start_date: overdueOnly ? null : reportScope.start,
+        p_end_date: overdueOnly ? reportScope.asOf : reportScope.end
       });
 
       if (error) throw error;
+      if (sequence !== reportSequence.current) return;
 
       setDetailsByCustomer(prev => ({
         ...prev,
@@ -180,7 +199,7 @@ export default function ReceivablesReportPage() {
     try {
       const dt = new Date(d);
       if (isNaN(dt.getTime())) return '-';
-      return dt.toLocaleDateString('ar-SA');
+      return dt.toLocaleDateString('en-GB', { calendar: 'gregory', numberingSystem: 'latn' });
     } catch {
       return '-';
     }
@@ -193,28 +212,7 @@ export default function ReceivablesReportPage() {
   return (
     <RoleGate allow={['admin','manager','accountant','marketing']}>
     <>
-      <style>{`
-        .screen-only { display: block; }
-        .print-only { display: none; }
-        @media print {
-          .screen-only { display: none !important; }
-          .print-only { display: block !important; }
-          header, aside, nav, .sticky, .fixed { display: none !important; }
-          .print-title { font-size: 18px; font-weight: 800; color: #111827; margin-bottom: 6px; }
-          .print-sub { color: #6b7280; font-size: 12px; margin-bottom: 10px; }
-          .p-table { width: 100%; border-collapse: collapse; }
-          .p-table th, .p-table td { border: 1px solid #e5e7eb; padding: 6px; text-align: right; font-size: 12px; }
-          .p-table th { background: #f9fafb; font-weight: 700; }
-          .print-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-          .print-brand { display: flex; align-items: center; gap: 10px; }
-          .print-brand img { height: 48px; width: auto; object-fit: contain; }
-          .print-summary { margin: 8px 0 12px 0; }
-          .sig-row { display: flex; gap: 40px; margin-top: 24px; }
-          .sig-box { flex: 1 1 0; }
-          .sig-label { font-size: 12px; color: #374151; margin-bottom: 28px; }
-          .sig-line { border-top: 1px solid #e5e7eb; height: 1px; }
-        }
-      `}</style>
+
     <div className="p-6 max-w-7xl mx-auto space-y-6 screen-only">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center gap-3">
@@ -230,20 +228,39 @@ export default function ReceivablesReportPage() {
               تقرير المديونية
             </h1>
             <p className="text-xs sm:text-sm text-gray-500 mt-1">
-              كشف بالمديونية حسب العملاء بناءً على الفواتير والمدفوعات المرتبطة بها.
+              أرصدة العملاء حسب القيود المحاسبية، مع عرض مستقل للمبالغ المتأخرة عن السداد.
             </p>
           </div>
         </div>
-+
+        <div className="flex flex-wrap items-center gap-2">
         <button
+          type="button"
+          aria-pressed={overdueOnly}
+          disabled={loading}
+          onClick={() => {
+            const next = !overdueOnly;
+            setOverdueOnly(next);
+            fetchReport(next);
+          }}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-bold transition-colors disabled:opacity-50 ${overdueOnly ? 'bg-rose-600 border-rose-600 text-white' : 'bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100'}`}
+        >
+          {overdueOnly ? 'المتأخرون فقط — عرض التقرير الكامل' : 'المتأخرون عن السداد فقط'}
+        </button>
+        <button
+          disabled={loading}
           onClick={() => window.print()}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
         >
           <Download size={18} />
-          <span>طباعة / تصدير</span>
+          <span>طباعة / حفظ PDF</span>
         </button>
+        </div>
       </div>
-+
+
+      {overdueOnly && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        يعرض المبالغ التي تأخر سدادها قبل {reportScope.asOf} فقط، حسب جدول الأقساط أو تاريخ استحقاق الفاتورة.
+        لا يشمل المستحق اليوم أو الأقساط القادمة، ويشمل الاستحقاقات القديمة دون التقيّد ببداية الفترة.
+      </div>}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
         <form
           onSubmit={(e) => {
@@ -271,6 +288,7 @@ export default function ReceivablesReportPage() {
             <input
               type="date"
               value={startDate}
+              disabled={overdueOnly || loading}
               onChange={(e) => setStartDate(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
             />
@@ -283,6 +301,7 @@ export default function ReceivablesReportPage() {
             <input
               type="date"
               value={endDate}
+              disabled={overdueOnly || loading}
               onChange={(e) => setEndDate(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
             />
@@ -309,6 +328,7 @@ export default function ReceivablesReportPage() {
           <div className="flex sm:block">
             <button
               type="submit"
+              disabled={loading}
               className="w-full px-4 sm:px-6 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors text-xs sm:text-sm flex items-center justify-center gap-2"
             >
               تحديث التقرير
@@ -316,26 +336,25 @@ export default function ReceivablesReportPage() {
           </div>
         </form>
       </div>
-+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
           <div className="text-sm text-gray-500 mb-1">عدد العملاء</div>
-          <div className="text-2xl font-bold text-gray-900">{totals.customers.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-gray-900">{totals.customers.toLocaleString('en-US')}</div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <div className="text-sm text-gray-500 mb-1">إجمالي المدين (الفواتير)</div>
+          <div className="text-sm text-gray-500 mb-1">{overdueOnly ? 'المستحق للدفعات المتأخرة' : 'إجمالي المدين (الفواتير)'}</div>
           <div className="text-2xl font-bold text-green-600 font-mono">
             {totals.invoiced.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <div className="text-sm text-gray-500 mb-1">إجمالي الدائن (المقبوضات)</div>
+          <div className="text-sm text-gray-500 mb-1">{overdueOnly ? 'المسدد من الدفعات المتأخرة' : 'إجمالي الدائن (المقبوضات)'}</div>
           <div className="text-2xl font-bold text-red-600 font-mono">
             {totals.paid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
         </div>
         <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
-          <div className="text-sm text-blue-600 mb-1">إجمالي المديونية</div>
+          <div className="text-sm text-blue-600 mb-1">{overdueOnly ? 'إجمالي المتأخر فقط' : 'إجمالي المديونية'}</div>
           <div className="text-2xl font-bold text-blue-900 font-mono">
             {totals.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
@@ -348,10 +367,10 @@ export default function ReceivablesReportPage() {
             <thead className="bg-gray-100 border-b border-gray-200">
               <tr>
                 <th className="px-6 py-4 font-bold text-gray-900">العميل</th>
-                <th className="px-6 py-4 font-bold text-gray-900 text-center">عدد العمليات</th>
-                <th className="px-6 py-4 font-bold text-gray-900">إجمالي مدين</th>
-                <th className="px-6 py-4 font-bold text-gray-900">إجمالي دائن</th>
-                <th className="px-6 py-4 font-bold text-gray-900">المتبقي (الرصيد)</th>
+                <th className="px-6 py-4 font-bold text-gray-900 text-center">{overdueOnly ? 'الدفعات المتأخرة' : 'عدد العمليات'}</th>
+                <th className="px-6 py-4 font-bold text-gray-900">{overdueOnly ? 'المستحق' : 'إجمالي مدين'}</th>
+                <th className="px-6 py-4 font-bold text-gray-900">{overdueOnly ? 'المسدد منه' : 'إجمالي دائن'}</th>
+                <th className="px-6 py-4 font-bold text-gray-900">{overdueOnly ? 'المتأخر فقط' : 'المتبقي (الرصيد)'}</th>
                 <th className="px-6 py-4 font-bold text-gray-900 text-center">كشف تفصيلي</th>
               </tr>
             </thead>
@@ -360,15 +379,19 @@ export default function ReceivablesReportPage() {
                 filteredRows.map((r) => {
                   const isOpen = expanded.has(r.customer_id);
                   const details = detailsByCustomer[r.customer_id] || [];
-                  
+
                   return (
                     <React.Fragment key={r.customer_id}>
                       <tr className="hover:bg-gray-50 transition-colors odd:bg-white even:bg-gray-50">
                         <td className="px-6 py-4 font-medium text-gray-900">
                           {r.customer_name}
+                          {overdueOnly && <div className="mt-1 text-xs font-normal text-rose-700">
+                            أقدم استحقاق: {formatDate(r.oldest_due_date)}
+                            {!!r.unit_numbers?.length && <span className="block text-gray-500">الوحدة: <bdi dir="ltr">{r.unit_numbers.join(' / ')}</bdi></span>}
+                          </div>}
                         </td>
                         <td className="px-6 py-4 text-gray-700 text-center">
-                          {r.invoices_count.toLocaleString()}
+                          {r.invoices_count.toLocaleString('en-US')}
                         </td>
                         <td className="px-6 py-4 font-bold text-green-700 font-mono">
                           {r.total_invoiced.toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -399,7 +422,7 @@ export default function ReceivablesReportPage() {
                                   <FileText size={16} />
                                   كشف حساب تفصيلي: {r.customer_name}
                                 </h4>
-                                <Link 
+                                <Link
                                   href={`/accounting/statement?mode=customer&id=${r.customer_id}`}
                                   className="text-xs text-blue-600 hover:underline flex items-center gap-1"
                                 >
@@ -460,7 +483,7 @@ export default function ReceivablesReportPage() {
               ) : (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                    لا توجد بيانات ضمن الفترة المحددة
+                    {loading ? 'جارٍ تحميل التقرير…' : overdueOnly ? 'لا يوجد عملاء متأخرون عن السداد ضمن النطاق المحدد' : 'لا توجد بيانات ضمن الفترة المحددة'}
                   </td>
                 </tr>
               )}
@@ -469,68 +492,10 @@ export default function ReceivablesReportPage() {
         </div>
       </div>
     </div>
-    <div className="print-only">
-      <div className="print-header">
-        <div className="print-brand">
-          {companyLogo ? <img src={companyLogo} alt="Logo" /> : null}
-          <div>
-            <div className="print-title">{companyName}</div>
-            <div className="print-sub">تقرير المديونية</div>
-          </div>
-        </div>
-        <div>
-          <div className="print-sub">الفترة: {startDate} إلى {endDate}</div>
-        </div>
-      </div>
-      <table className="p-table print-summary">
-        <thead>
-          <tr>
-            <th>إجمالي الفواتير</th>
-            <th>إجمالي المدفوع</th>
-            <th>إجمالي المديونية</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>{totals.invoiced.toLocaleString()} ر.س</td>
-            <td>{totals.paid.toLocaleString()} ر.س</td>
-            <td>{totals.remaining.toLocaleString()} ر.س</td>
-          </tr>
-        </tbody>
-      </table>
-      <table className="p-table">
-        <thead>
-          <tr>
-            <th>العميل</th>
-            <th>عدد الفواتير</th>
-            <th>إجمالي الفواتير</th>
-            <th>إجمالي المدفوع</th>
-            <th>المتبقي</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredRows.map((r) => (
-            <tr key={r.customer_id}>
-              <td>{r.customer_name}</td>
-              <td>{r.invoices_count.toLocaleString()}</td>
-              <td>{r.total_invoiced.toLocaleString()} ر.س</td>
-              <td>{r.total_paid.toLocaleString()} ر.س</td>
-              <td>{r.total_remaining.toLocaleString()} ر.س</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="sig-row">
-        <div className="sig-box">
-          <div className="sig-label">توقيع المدير</div>
-          <div className="sig-line"></div>
-        </div>
-        <div className="sig-box">
-          <div className="sig-label">توقيع المحاسب</div>
-          <div className="sig-line"></div>
-        </div>
-      </div>
-    </div>
+    <ReceivablesReportPrint companyName={companyName} companyLogo={companyLogo}
+      startDate={reportScope.start} endDate={reportScope.end}
+      hotelLabel={reportScope.hotelId === 'all' ? 'كل الفنادق' : hotelNameById[reportScope.hotelId] || 'الفندق المحدد'}
+      rows={filteredRows} overdue={overdueOnly} asOf={reportScope.asOf} searchText={searchText} />
     </>
     </RoleGate>
   );

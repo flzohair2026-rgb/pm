@@ -1,5 +1,16 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
+@keyframes bookingAlertEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .booking-alert-entry {
+    animation: bookingAlertEnter 320ms ease-out both;
+  }
+}
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));

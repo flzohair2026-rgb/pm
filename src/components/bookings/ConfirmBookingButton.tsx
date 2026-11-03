@@ -5,7 +5,7 @@ import { Check } from 'lucide-react';
 import { useUserRole } from '@/hooks/useUserRole';
 import { supabase } from '@/lib/supabase';
 
-export default function ConfirmBookingButton({ id, disabled }: { id: string; disabled?: boolean }) {
+export default function ConfirmBookingButton({ id, disabled, onConfirmed }: { id: string; disabled?: boolean; onConfirmed?: () => void }) {
   const { role, loading } = useUserRole();
   const isAdmin = role === 'admin';
   const [saving, setSaving] = useState(false);
@@ -21,10 +21,8 @@ export default function ConfirmBookingButton({ id, disabled }: { id: string; dis
         .eq('id', id);
       if (error) throw error;
       setDone(true);
-      setTimeout(() => {
-        // Refresh the page to reflect server-rendered status
-        if (typeof window !== 'undefined') window.location.reload();
-      }, 500);
+      if (onConfirmed) onConfirmed();
+      else if (typeof window !== 'undefined') window.location.reload();
     } catch (e: any) {
       alert('تعذر تأكيد الحجز: ' + (e.message || 'خطأ غير معروف'));
     } finally {

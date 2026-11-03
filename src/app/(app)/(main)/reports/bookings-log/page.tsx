@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { List, Calendar, Download, ArrowRight, Trash2, Loader2, FileText, Building2, User } from 'lucide-react';
+import { List, Calendar, Download, ArrowRight, Trash2, Loader2, FileText, Building2, User, FileSpreadsheet } from 'lucide-react';
 import { useUserRole } from '@/hooks/useUserRole';
 import RoleGate from '@/components/auth/RoleGate';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
@@ -182,6 +182,8 @@ interface Row {
   email?: string;
   /** يوجد صف في customer_accounts (نفس مسار كشف الحساب قبل جلب الأرصدة) */
   has_customer_account: boolean;
+  /** رقم حساب إيرادات الوحدة / الشقة في دفتر الأستاذ (units.revenue_account_id → accounts.code) */
+  unit_account_code?: string | null;
   hotel_id?: string;
   hotel_name?: string;
   unit_number?: string;
@@ -209,6 +211,8 @@ interface Row {
   has_ejar_upload: boolean;
   /** هل الحجز لديه إضافات على الفواتير */
   has_additional_services: boolean;
+  /** إجمالي مبلغ الإضافات على جميع الفواتير المرتبطة بالحجز */
+  additional_total_amount: number;
 }
 
 export default function BookingsLogReportPage() {
@@ -243,6 +247,222 @@ export default function BookingsLogReportPage() {
     setTimeout(() => {
       window.print();
     }, 200);
+  };
+
+  const escapeHtml = (value: any): string => {
+    if (value === null || value === undefined) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  const handleExportXls = () => {
+    if (rows.length === 0) {
+      alert('لا توجد بيانات في التقرير حالياً. قم بتحديث التقرير ثم عاود المحاولة.');
+      return;
+    }
+
+    const appliedFilters: string[] = [];
+    appliedFilters.push(`من تاريخ: ${startDate}`);
+    appliedFilters.push(`إلى تاريخ: ${endDate}`);
+    if (statusFilter !== 'all') appliedFilters.push(`الحالة: ${statusFilter}`);
+    if (customerTypeFilter !== 'all') appliedFilters.push(`تصنيف العميل: ${customerTypeFilter === 'company' ? 'عميل شركة' : 'عميل مشغل'}`);
+    if (indicatorFilter !== 'all') {
+      const map: Record<string, string> = {
+        ejar: 'مرفوع لمنصة إيجار',
+        additional: 'لديه إضافات على الفواتير',
+        none: 'بدون إضافات أو رفع'
+      };
+      appliedFilters.push(`حالة العقد: ${map[indicatorFilter] || indicatorFilter}`);
+    }
+    if (selectedHotelId !== 'all') appliedFilters.push(`الفندق: ${selectedHotelName}`);
+    if (searchText.trim()) appliedFilters.push(`بحث: "${searchText.trim()}"`);
+
+    const actualExportRows = filteredRows.length > 0 ? filteredRows : rows;
+
+    let rowsHtml = '';
+    actualExportRows.forEach((r, idx) => {
+      const isCompany = r.customer_type === 'company';
+      const customerTypeBg = isCompany ? '#eef2ff' : '#fffbeb';
+      const customerTypeColor = isCompany ? '#4338ca' : '#92400e';
+      const statusAr = formatStatusAr(r.status);
+      let statusBg = '#f8fafc';
+      let statusColor = '#0f172a';
+      const sLow = String(r.status || '').toLowerCase();
+      if (['confirmed', 'deposit_paid'].includes(sLow)) { statusBg = '#eff6ff'; statusColor = '#1d4ed8'; }
+      else if (sLow === 'checked_in') { statusBg = '#ecfeff'; statusColor = '#0f766e'; }
+      else if (['checked_out', 'completed'].includes(sLow)) { statusBg = '#f1f5f9'; statusColor = '#475569'; }
+      else if (['canceled', 'cancelled', 'no_show'].includes(sLow)) { statusBg = '#fef2f2'; statusColor = '#b91c1c'; }
+      else if (['preliminary', 'pending'].includes(sLow)) { statusBg = '#fefce8'; statusColor = '#854d0e'; }
+      const ejarCellBg = r.has_ejar_upload ? '#dcfce7' : '#f9fafb';
+      const ejarCellColor = r.has_ejar_upload ? '#166534' : '#6b7280';
+      const addCellBg = r.has_additional_services ? '#fee2e2' : '#f9fafb';
+      const addCellColor = r.has_additional_services ? '#991b1b' : '#6b7280';
+      const balanceBg = Number(r.balance || 0) > 0.01 ? '#fff7ed' : '#ecfdf5';
+      const balanceColor = Number(r.balance || 0) > 0.01 ? '#9a3412' : '#065f46';
+
+      rowsHtml += `
+        <tr>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;width:40px;">${idx + 1}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;">${escapeHtml(r.customer_name)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;background:${customerTypeBg};color:${customerTypeColor};font-weight:bold;">${isCompany ? 'عميل شركة' : 'عميل مشغل'}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;direction:ltr;">${escapeHtml(r.phone || '-')}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;">${escapeHtml(r.email || '-')}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;">${escapeHtml(r.hotel_name || '-')}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;font-weight:bold;">${escapeHtml(r.unit_number || '-')}${r.unit_type_name ? ` <span style="color:#6b7280;font-weight:normal;font-size:11px;">(${escapeHtml(r.unit_type_name)})</span>` : ''}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;direction:ltr;background:${r.unit_account_code && r.unit_account_code !== '__NO_MAPPING__' ? '#f0fdf4' : (r.unit_account_code === '__NO_MAPPING__' ? '#fffbeb' : '#f9fafb')};color:${r.unit_account_code && r.unit_account_code !== '__NO_MAPPING__' ? '#166534' : (r.unit_account_code === '__NO_MAPPING__' ? '#b45309' : '#6b7280')};font-weight:bold;">${r.unit_account_code && r.unit_account_code !== '__NO_MAPPING__' ? escapeHtml(r.unit_account_code) : (r.unit_account_code === '__NO_MAPPING__' ? 'بدون ربط' : '—')}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;direction:ltr;">${escapeHtml(r.check_in)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;direction:ltr;">${escapeHtml(r.check_out)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;font-weight:bold;">${r.total_booking_nights.toLocaleString()}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;direction:ltr;color:#b91c1c;font-weight:bold;">${escapeHtml((r.next_payment_due && r.next_payment_due.includes('-')) ? formatShortDate(r.next_payment_due) : (r.next_payment_due || '-'))}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:left;direction:ltr;font-weight:bold;color:#1e3a8a;">${formatSarEn(r.invoice_total)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:left;direction:ltr;font-weight:bold;color:#065f46;">${formatSarEn(r.paid_total)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:left;direction:ltr;font-weight:bold;background:${balanceBg};color:${balanceColor};">${formatSarEn(r.balance)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;background:${statusBg};color:${statusColor};font-weight:bold;">${escapeHtml(statusAr)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;background:${ejarCellBg};color:${ejarCellColor};font-weight:bold;">${r.has_ejar_upload ? 'نعم' : 'لا'}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;background:${addCellBg};color:${addCellColor};font-weight:bold;">${r.has_additional_services ? 'نعم' : 'لا'}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:left;direction:ltr;font-weight:bold;background:${r.additional_total_amount > 0.01 ? '#fef3c7' : '#f9fafb'};color:${r.additional_total_amount > 0.01 ? '#92400e' : '#6b7280'};">${formatSarEn(r.additional_total_amount)}</td>
+          <td style="border:1px solid #e5e7eb;padding:6px 8px;text-align:center;color:#6b7280;font-size:11px;direction:ltr;">${escapeHtml(String(r.id).slice(0, 16))}</td>
+        </tr>
+      `;
+    });
+
+    const exportTotals = actualExportRows.reduce((acc, r) => {
+      acc.invoice += Number(r.invoice_total || 0);
+      acc.paid += Number(r.paid_total || 0);
+      acc.balance += Number(r.balance || 0);
+      acc.nights += Number(r.total_booking_nights || 0);
+      acc.additional += Number(r.additional_total_amount || 0);
+      return acc;
+    }, { invoice: 0, paid: 0, balance: 0, nights: 0, additional: 0 });
+
+    const nowStr = new Date().toLocaleString('ar-SA', {
+      year: 'numeric', month: 'long', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+
+    const titleHtml = `
+      <tr>
+        <td colspan="20" style="background:#065f46;color:#ffffff;padding:16px;text-align:center;font-size:20px;font-weight:bold;">
+          تقرير سجل الحجوزات
+        </td>
+      </tr>
+      <tr>
+        <td colspan="20" style="background:#ecfdf5;padding:10px;text-align:center;color:#064e3b;">
+          تم إنشاء التقرير في: <strong>${nowStr}</strong>
+          <span style="margin:0 12px;">|</span>
+          إجمالي السطور المصدرة: <strong>${actualExportRows.length.toLocaleString()}</strong> من أصل <strong>${rows.length.toLocaleString()}</strong>
+        </td>
+      </tr>
+      <tr>
+        <td colspan="20" style="background:#f8fafc;padding:10px;text-align:right;color:#334155;font-size:12px;">
+          <strong>الفلاتر المطبقة:</strong> ${appliedFilters.map(escapeHtml).join(' &nbsp;&nbsp;✦&nbsp;&nbsp; ')}
+        </td>
+      </tr>
+      <tr><td colspan="20" style="padding:8px;"></td></tr>
+    `;
+
+    const headerHtml = `
+      <tr>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;width:40px;">#</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:180px;">العميل</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:100px;">التصنيف</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:110px;">الهاتف</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:180px;">البريد الإلكتروني</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:140px;">الفندق</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:120px;">الوحدة</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:120px;">حساب الشقة</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:100px;">الدخول</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:100px;">الخروج</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:70px;">الليالي</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:110px;">الاستحقاق القادم</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:120px;">إجمالي الفاتورة</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:120px;">المدفوع</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:120px;">المتبقي</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:110px;">الحالة</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:110px;">مرفوع لإيجار</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:100px;">لديه إضافات</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:130px;">مبلغ الإضافات</th>
+        <th style="background:#1e293b;color:#ffffff;border:1px solid #334155;padding:10px 8px;text-align:center;min-width:140px;">رقم الحجز (اختصار)</th>
+      </tr>
+    `;
+
+    const totalsHtml = `
+      <tr>
+        <td colspan="10" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:10px 8px;text-align:left;font-weight:bold;color:#0f172a;font-size:14px;">
+          ملخص التقرير (مجاميع السطور المصدرة — ${actualExportRows.length.toLocaleString()} حجز)
+        </td>
+        <td style="background:#dbeafe;border:1px solid #93c5fd;padding:10px 8px;text-align:center;font-weight:bold;color:#1e3a8a;font-size:14px;">
+          ${exportTotals.nights.toLocaleString()} ليلة
+        </td>
+        <td style="background:#f1f5f9;border:1px solid #cbd5e1;padding:10px 8px;"></td>
+        <td style="background:#bfdbfe;border:1px solid #60a5fa;padding:10px 8px;text-align:left;direction:ltr;font-weight:bold;color:#1e3a8a;font-size:13px;">
+          ${formatSarEn(exportTotals.invoice)}
+        </td>
+        <td style="background:#bbf7d0;border:1px solid #4ade80;padding:10px 8px;text-align:left;direction:ltr;font-weight:bold;color:#065f46;font-size:13px;">
+          ${formatSarEn(exportTotals.paid)}
+        </td>
+        <td style="background:${exportTotals.balance > 0.01 ? '#fed7aa' : '#86efac'};border:1px solid ${exportTotals.balance > 0.01 ? '#fb923c' : '#4ade80'};padding:10px 8px;text-align:left;direction:ltr;font-weight:bold;color:${exportTotals.balance > 0.01 ? '#9a3412' : '#065f46'};font-size:13px;">
+          ${formatSarEn(exportTotals.balance)}
+        </td>
+        <td colspan="3" style="background:#f1f5f9;border:1px solid #cbd5e1;"></td>
+        <td style="background:${exportTotals.additional > 0.01 ? '#fde68a' : '#f9fafb'};border:1px solid ${exportTotals.additional > 0.01 ? '#f59e0b' : '#d1d5db'};padding:10px 8px;text-align:left;direction:ltr;font-weight:bold;color:${exportTotals.additional > 0.01 ? '#92400e' : '#6b7280'};font-size:13px;">
+          ${formatSarEn(exportTotals.additional)}
+        </td>
+        <td style="background:#f1f5f9;border:1px solid #cbd5e1;padding:10px 8px;"></td>
+      </tr>
+    `;
+
+    const xlsContent = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        <!--[if gte mso 9]><xml>
+          <x:ExcelWorkbook>
+            <x:ExcelWorksheets>
+              <x:ExcelWorksheet>
+                <x:Name>سجل الحجوزات</x:Name>
+                <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+              </x:ExcelWorksheet>
+            </x:ExcelWorksheets>
+          </x:ExcelWorkbook>
+        </xml><![endif]-->
+        <style>
+          @page { sheet-page-order: down-then-over; }
+          * { font-family: "Segoe UI", "Tahoma", "Arial", sans-serif; }
+          table { border-collapse: collapse; mso-number-format: "\\@"; }
+          td, th { vertical-align: middle; mso-number-format: "\\@"; }
+          body { direction: rtl; }
+        </style>
+        <title>تقرير سجل الحجوزات</title>
+      </head>
+      <body dir="rtl">
+        <table cellpadding="0" cellspacing="0" width="100%" border="0" style="width:100%;direction:rtl;">
+          ${titleHtml}
+          ${headerHtml}
+          ${rowsHtml}
+          ${totalsHtml}
+        </table>
+      </body>
+      </html>
+    `;
+
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + xlsContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const now = new Date();
+    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `BookingsLog_Report_${stamp}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   /** تحليل YYYY-MM-DD كتاريخ تقويم محلي لتفادي إزاحة اليوم بسبب UTC في `new Date('...')`. */
@@ -287,7 +507,7 @@ export default function BookingsLogReportPage() {
           status,
           total_price,
           booking_type,
-          unit:units(unit_number, unit_types(name), hotel:hotels(id, name)),
+          unit:units(unit_number, unit_types(name), hotel:hotels(id, name), revenue_account:accounts!revenue_account_id(code, id)),
           invoices(id, total_amount, status, additional_services_amount)
         `)
         .lte('check_in', endDate)
@@ -303,6 +523,7 @@ export default function BookingsLogReportPage() {
 
       const contactById: Record<string, { full_name: string; phone?: string; email?: string; customer_type?: string }> = {};
       const hasAccountByCustomerId: Record<string, boolean> = {};
+      const accountNumberByCustomerId: Record<string, string> = {};
 
       const idChunkSize = 120;
       await Promise.all([
@@ -325,13 +546,59 @@ export default function BookingsLogReportPage() {
         })(),
         (async () => {
           for (const chunk of fetchIdChunks(customerIds, idChunkSize)) {
-            const { data: accRows, error: aErr } = await supabase
-              .from('customer_accounts')
-              .select('customer_id')
-              .in('customer_id', chunk);
-            if (aErr) throw aErr;
-            (accRows || []).forEach((row: any) => {
-              if (row?.customer_id) hasAccountByCustomerId[String(row.customer_id)] = true;
+            let rows: any[] = [];
+            try {
+              const { data: accRows, error: aErr } = await supabase
+                .from('customer_accounts')
+                .select('customer_id, accounts!inner(code)')
+                .in('customer_id', chunk);
+              if (!aErr) rows = accRows || [];
+              else throw aErr;
+            } catch (firstErr) {
+              try {
+                const { data: accRows, error: aErr2 } = await supabase
+                  .from('customer_accounts')
+                  .select('customer_id, account_id')
+                  .in('customer_id', chunk);
+                if (!aErr2 && accRows?.length) {
+                  const accIds = accRows
+                    .map((r: any) => r?.account_id)
+                    .filter(Boolean) as string[];
+                  const idToCustomer: Record<string, string> = {};
+                  accRows.forEach((r: any) => {
+                    if (r?.account_id) idToCustomer[String(r.account_id)] = String(r.customer_id);
+                  });
+                  const codesMap: Record<string, string> = {};
+                  for (const idChunk of fetchIdChunks(accIds, 120)) {
+                    const { data: accCodeRows, error: codeErr } = await supabase
+                      .from('accounts')
+                      .select('id, code')
+                      .in('id', idChunk);
+                    if (!codeErr) {
+                      (accCodeRows || []).forEach((a: any) => {
+                        codesMap[String(a.id)] = String(a.code || '').trim();
+                      });
+                    }
+                  }
+                  rows = accRows.map((r: any) => ({
+                    customer_id: r.customer_id,
+                    accounts: { code: r?.account_id ? codesMap[String(r.account_id)] : '' },
+                  }));
+                }
+              } catch (_ignored) {
+                const { data: accRows, error: aErrFallback } = await supabase
+                  .from('customer_accounts')
+                  .select('customer_id')
+                  .in('customer_id', chunk);
+                if (!aErrFallback) rows = (accRows || []).map((r) => ({ customer_id: r.customer_id, accounts: { code: '' } }));
+              }
+            }
+            rows.forEach((row: any) => {
+              if (row?.customer_id) {
+                hasAccountByCustomerId[String(row.customer_id)] = true;
+                const code = String(row?.accounts?.code || row?.account_code || '').trim();
+                if (code) accountNumberByCustomerId[String(row.customer_id)] = code;
+              }
             });
           }
         })(),
@@ -428,10 +695,12 @@ export default function BookingsLogReportPage() {
           invoiceTotal = Number(b.total_price || 0);
         }
 
-        // تحقق من وجود إضافات على الفواتير
-        const hasAdditionalServices = activeInvoices.some(
-          (inv: any) => Number(inv.additional_services_amount || 0) > 0
-        );
+        // تحقق من وجود إضافات على الفواتير + جمع إجمالي مبلغ الإضافات
+        let additionalTotalAmount = 0;
+        activeInvoices.forEach((inv: any) => {
+          additionalTotalAmount += Number(inv.additional_services_amount || 0);
+        });
+        const hasAdditionalServices = additionalTotalAmount > 0;
 
         let paidSum: number;
         let balance: number;
@@ -464,6 +733,13 @@ export default function BookingsLogReportPage() {
           phone: contact?.phone || '',
           email: contact?.email,
           has_customer_account: cid ? !!hasAccountByCustomerId[cid] : false,
+          unit_account_code: (() => {
+            const code = b?.unit?.revenue_account?.code ? String(b.unit.revenue_account.code).trim() : '';
+            if (code) return code;
+            const rai = b?.unit?.revenue_account?.id;
+            if (rai) return '__NO_MAPPING__';
+            return null;
+          })(),
           hotel_id: b.unit?.hotel?.id || '',
           hotel_name: b.unit?.hotel?.name || '',
           unit_number: b.unit?.unit_number || '',
@@ -488,6 +764,7 @@ export default function BookingsLogReportPage() {
           status: b.status || '',
           has_ejar_upload: ejarBookingIds.has(b.id),
           has_additional_services: hasAdditionalServices,
+          additional_total_amount: additionalTotalAmount,
         };
       });
 
@@ -935,7 +1212,16 @@ export default function BookingsLogReportPage() {
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={handleExportXls}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                title="تصدير التقرير إلى ملف Excel XLS أصلي بتنسيق كامل وألوان ودعم عربي 100%"
+              >
+                <FileSpreadsheet size={18} />
+                <span>تحميل إكسل (.xls)</span>
+              </button>
+
               <button
                 onClick={() => handlePrint('standard')}
                 className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
@@ -1145,6 +1431,9 @@ export default function BookingsLogReportPage() {
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
                     الوحدة (النوع)
                   </th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap" title="كود حساب إيرادات الوحدة (الشقة) في دفتر الأستاذ (حساب 44xxxx)">
+                    حساب الشقة
+                  </th>
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
                    دخول
                   </th>
@@ -1175,6 +1464,9 @@ export default function BookingsLogReportPage() {
                   >
                     المتبقي
                   </th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap" title="إجمالي مبلغ الإضافات على جميع الفواتير">
+                    الإضافات
+                  </th>
                   <th className="px-4 py-3 sm:px-6 sm:py-4 font-bold text-gray-900 whitespace-nowrap">
                     الحالة
                   </th>
@@ -1185,7 +1477,7 @@ export default function BookingsLogReportPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={14}
+                      colSpan={16}
                       className="px-6 py-12 text-center text-gray-500"
                     >
                       جاري تحميل البيانات...
@@ -1247,6 +1539,17 @@ export default function BookingsLogReportPage() {
                           <span className="text-[10px] text-gray-500 ml-1">({r.unit_type_name})</span>
                         )}
                       </td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap font-mono" title="كود حساب إيرادات الوحدة (الشقة) في دفتر الأستاذ">
+                        {r.unit_account_code && r.unit_account_code !== '__NO_MAPPING__' ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-md bg-emerald-50 text-emerald-800 font-bold text-xs border border-emerald-200">
+                            {r.unit_account_code}
+                          </span>
+                        ) : r.unit_account_code === '__NO_MAPPING__' ? (
+                          <span className="text-xs text-amber-600 font-medium">بدون ربط</span>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap font-mono">
                         {formatShortDate(r.check_in)}
                       </td>
@@ -1298,6 +1601,18 @@ export default function BookingsLogReportPage() {
                       >
                         {formatSarEn(r.balance)}
                       </td>
+                      <td
+                        className={`px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap tabular-nums font-mono font-bold ${r.additional_total_amount > 0.01 ? 'text-amber-800' : 'text-gray-400'}`}
+                        title="إجمالي مبلغ الإضافات على جميع الفواتير المرتبطة بالحجز"
+                      >
+                        {r.additional_total_amount > 0.01 ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 border border-amber-200">
+                            {formatSarEn(r.additional_total_amount)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">0.00</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
                         {formatStatusAr(r.status)}
                       </td>
@@ -1306,7 +1621,7 @@ export default function BookingsLogReportPage() {
                 ) : (
                   <tr>
                     <td
-                      colSpan={14}
+                      colSpan={16}
                       className="px-6 py-12 text-center text-gray-500"
                     >
                       لا توجد بيانات ضمن الفترة المحددة
@@ -1425,6 +1740,7 @@ export default function BookingsLogReportPage() {
                 <th>الهاتف</th>
                 <th>الفندق</th>
                 <th>الوحدة (النوع)</th>
+                <th>حساب الشقة</th>
                 <th>دخول</th>
                 <th>خروج</th>
                 <th>الليالي</th>
@@ -1432,6 +1748,7 @@ export default function BookingsLogReportPage() {
                 <th>الفاتورة</th>
                 <th>المدفوع</th>
                 <th>المتبقي</th>
+                <th>الإضافات</th>
                 <th>الحالة</th>
               </tr>
             </thead>
@@ -1470,6 +1787,9 @@ export default function BookingsLogReportPage() {
                         <span style={{ fontSize: '8px', color: '#6b7280', marginRight: '4px' }}>({r.unit_type_name})</span>
                       )}
                     </td>
+                    <td style={{ color: r.unit_account_code && r.unit_account_code !== '__NO_MAPPING__' ? '#065f46' : (r.unit_account_code === '__NO_MAPPING__' ? '#b45309' : '#6b7280'), fontWeight: 'bold', textAlign: 'center' }}>
+                      {r.unit_account_code && r.unit_account_code !== '__NO_MAPPING__' ? r.unit_account_code : (r.unit_account_code === '__NO_MAPPING__' ? 'بدون ربط' : '—')}
+                    </td>
                     <td className="font-mono">{formatShortDate(r.check_in)}</td>
                     <td className="font-mono">{formatShortDate(r.check_out)}</td>
                     <td>{r.total_booking_nights.toLocaleString()}</td>
@@ -1481,12 +1801,15 @@ export default function BookingsLogReportPage() {
                     <td className="font-mono">{formatSarEn(r.invoice_total)}</td>
                     <td className="font-mono">{formatSarEn(r.paid_total)}</td>
                     <td className="font-mono">{formatSarEn(r.balance)}</td>
+                    <td className="font-mono" style={{ color: r.additional_total_amount > 0.01 ? '#92400e' : '#6b7280', fontWeight: 'bold' }}>
+                      {formatSarEn(r.additional_total_amount)}
+                    </td>
                     <td>{formatStatusAr(r.status)}</td>
                   </tr>
                 )})
               ) : (
                 <tr>
-                  <td colSpan={14} style={{ textAlign: 'center', padding: '12px' }}>
+                  <td colSpan={16} style={{ textAlign: 'center', padding: '12px' }}>
                     لا توجد بيانات ضمن الفترة المحددة
                   </td>
                 </tr>

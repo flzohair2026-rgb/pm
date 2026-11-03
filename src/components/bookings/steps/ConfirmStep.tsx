@@ -14,9 +14,12 @@ interface ConfirmStepProps {
   onSuccess: () => void;
   onBack: () => void;
   language?: AppLanguage;
+  mode?: 'create' | 'complete';
+  completeBookingId?: string;
+  completeBookingData?: any;
 }
 
-export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBack, language: languageProp }) => {
+export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBack, language: languageProp, mode = 'create', completeBookingId, completeBookingData }) => {
   const { language: storedLanguage } = useAppLanguage();
   const language = languageProp ?? storedLanguage;
   const t = (arText: string, enText: string) => (language === 'en' ? enText : arText);
@@ -162,48 +165,94 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
       // Pre-check overlap to avoid DB exclusion error
       const startStr = format(data.startDate, 'yyyy-MM-dd');
       const endStr = format(data.endDate, 'yyyy-MM-dd');
+      const pad4 = (n: number) => String(n).padStart(4, '0');
+      const finalStatus = data.depositResult.depositAmount > 0 ? 'confirmed' : 'pending_deposit';
+
+      const conflictStatuses = mode === 'complete' && completeBookingId
+        ? ['pending_deposit', 'confirmed', 'checked_in', 'pending', 'preliminary', 'deposit_paid']
+        : ['pending_deposit', 'confirmed', 'checked_in', 'pending', 'preliminary', 'deposit_paid'];
       const { data: conflicts } = await supabase
         .from('bookings')
         .select('id')
         .eq('unit_id', data.unit?.id)
-        .in('status', ['pending_deposit', 'confirmed', 'checked_in'])
+        .in('status', conflictStatuses)
         .lt('check_in', endStr)
-        .gt('check_out', startStr);
-      if ((conflicts || []).length > 0) {
+        .gt('check_out', startStr)
+        .maybeSingle();
+      const hasRealConflict = (() => {
+        if (!conflicts) return false;
+        if (Array.isArray(conflicts)) {
+          if (conflicts.length === 0) return false;
+          return !completeBookingId || conflicts.some((c: any) => c.id !== completeBookingId);
+        }
+        return !completeBookingId || (conflicts as any).id !== completeBookingId;
+      })();
+      if (hasRealConflict) {
         setError(t('التواريخ تتعارض مع حجز آخر للوحدة. يرجى اختيار تواريخ مختلفة.', 'Dates conflict with another booking for this unit. Please choose different dates.'));
         setLoading(false);
         return;
       }
-      const pad4 = (n: number) => String(n).padStart(4, '0');
-      // 1. Create Booking
-      const { data: booking, error: bookingError } = await supabase
-        .from('bookings')
-        .insert({
-          hotel_id: bookingHotelId,
-          customer_id: data.customer.id,
-          unit_id: data.unit?.id,
-          check_in: startStr,
-          check_out: endStr,
-          nights: data.priceCalculation?.nights,
-          total_price: data.pricingResult.finalTotal,
-          tax_amount: data.pricingResult.taxAmount,
-          subtotal: data.pricingResult.subtotal,
-          discount_amount: data.pricingResult.discountAmount,
-          additional_services: data.pricingResult.extras,
-          status: data.depositResult.depositAmount > 0 ? 'confirmed' : 'pending_deposit',
-          booking_type: data.bookingType || 'nightly'
-        })
-        .select()
-        .single();
+
+      let booking: any = null;
+      let bookingError: any = null;
+
+      if (mode === 'complete' && completeBookingId) {
+        // ====== UPDATE EXISTING BOOKING (same booking_id, no duplicate) ======
+        const { data: updatedBooking, error: updError } = await supabase
+          .from('bookings')
+          .update({
+            hotel_id: bookingHotelId,
+            customer_id: data.customer.id,
+            unit_id: data.unit?.id,
+            check_in: startStr,
+            check_out: endStr,
+            nights: data.priceCalculation?.nights,
+            total_price: data.pricingResult.finalTotal,
+            tax_amount: data.pricingResult.taxAmount,
+            subtotal: data.pricingResult.subtotal,
+            discount_amount: data.pricingResult.discountAmount,
+            additional_services: data.pricingResult.extras,
+            status: finalStatus,
+            booking_type: data.bookingType || 'nightly'
+          })
+          .eq('id', completeBookingId)
+          .select()
+          .single();
+        booking = updatedBooking;
+        bookingError = updError;
+      } else {
+        // ====== CREATE NEW BOOKING (default legacy flow) ======
+        const { data: newBooking, error: insError } = await supabase
+          .from('bookings')
+          .insert({
+            hotel_id: bookingHotelId,
+            customer_id: data.customer.id,
+            unit_id: data.unit?.id,
+            check_in: startStr,
+            check_out: endStr,
+            nights: data.priceCalculation?.nights,
+            total_price: data.pricingResult.finalTotal,
+            tax_amount: data.pricingResult.taxAmount,
+            subtotal: data.pricingResult.subtotal,
+            discount_amount: data.pricingResult.discountAmount,
+            additional_services: data.pricingResult.extras,
+            status: finalStatus,
+            booking_type: data.bookingType || 'nightly'
+          })
+          .select()
+          .single();
+        booking = newBooking;
+        bookingError = insError;
+      }
 
       if (bookingError) {
         const msg = bookingError.message || '';
         if (msg.includes('prevent_double_booking') || msg.toLowerCase().includes('conflicting key value')) {
-          throw new Error('لا يمكن إنشاء الحجز بسبب تعارض في التواريخ مع حجز آخر للوحدة. تأكد أن تاريخ المغادرة لحجز وآخر لا يساوي تاريخ الوصول للحجز الجديد (النهاية غير شمولية).');
+          throw new Error('لا يمكن حفظ الحجز بسبب تعارض في التواريخ مع حجز آخر للوحدة. تأكد أن تاريخ المغادرة لحجز وآخر لا يساوي تاريخ الوصول للحجز الجديد (النهاية غير شمولية).');
         }
         throw new Error(msg);
       }
-      if (!booking) throw new Error('فشل إنشاء الحجز');
+      if (!booking) throw new Error(mode === 'complete' ? 'فشل تحديث الحجز' : 'فشل إنشاء الحجز');
       
       setBookingId(booking.id);
 
@@ -215,7 +264,7 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
             unit_id: data.unit?.id || null,
             customer_id: data.customer.id,
             hotel_id: bookingHotelId,
-            message: `مصدر الحجز: ${data.bookingSource === 'reception' ? 'استقبال' : data.bookingSource === 'platform' ? (data.platformName || 'منصة') : 'وسيط'}`,
+            message: `مصدر الحجز: ${data.bookingSource === 'reception' ? 'استقبال' : data.bookingSource === 'platform' ? (data.platformName || 'منصة') : data.bookingSource === 'broker' ? 'وسيط' : data.bookingSource === 'quick' ? 'حجز سريع' : data.bookingSource === 'website' ? 'موقع إلكتروني' : data.bookingSource === 'api' ? 'API' : data.bookingSource === 'walk_in' ? 'حضوري' : data.bookingSource === 'phone' ? 'هاتف' : data.bookingSource}`,
             payload: {
               booking_source: data.bookingSource,
               platform_name: data.platformName || null,
@@ -225,9 +274,13 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
           });
         }
         const { data: { user: actor } } = await supabase.auth.getUser();
-        const message = `تم حجز جديد للعميل ${data.customer.full_name} في الوحدة ${data.unit?.unit_number || '-'} من ${format(data.startDate, 'yyyy-MM-dd')} إلى ${format(data.endDate, 'yyyy-MM-dd')}`;
+        const isCompleteMode = mode === 'complete';
+        const eventType = isCompleteMode ? 'booking_completed' : 'booking_created';
+        const message = isCompleteMode
+          ? `تم إكمال إجراءات الحجز #${booking.id?.slice(0, 8)} للعميل ${data.customer.full_name} — الوحدة ${data.unit?.unit_number || '-'} من ${format(data.startDate, 'yyyy-MM-dd')} إلى ${format(data.endDate, 'yyyy-MM-dd')}`
+          : `تم حجز جديد للعميل ${data.customer.full_name} في الوحدة ${data.unit?.unit_number || '-'} من ${format(data.startDate, 'yyyy-MM-dd')} إلى ${format(data.endDate, 'yyyy-MM-dd')}`;
         await supabase.from('system_events').insert({
-          event_type: 'booking_created',
+          event_type: eventType,
           booking_id: booking.id,
           unit_id: data.unit?.id || null,
           customer_id: data.customer.id,
@@ -238,11 +291,14 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
             check_out: format(data.endDate, 'yyyy-MM-dd'),
             total_price: data.pricingResult.finalTotal,
             actor_id: actor?.id || null,
-            actor_email: actor?.email || null
+            actor_email: actor?.email || null,
+            complete_mode: isCompleteMode,
+            previous_status: completeBookingData?.status || null,
+            new_status: finalStatus
           }
         });
       } catch (eventError) {
-        console.error('Failed to log booking_created event:', eventError);
+        console.error('Failed to log booking event:', eventError);
       }
 
       // 2. Create Invoice (Draft)
@@ -399,72 +455,109 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
         }
       }
 
-      // 3. Create Payment/Journal Entry if deposit > 0
+      // 3. Create Payment/Journal Entry if deposit > 0 — SKIP duplicates in complete mode
       if (data.depositResult.depositAmount > 0 && data.depositResult.isPaid) {
           const txnDate = today;
-          const { data: period, error: periodError } = await supabase
-              .from('accounting_periods')
-              .select('id')
-              .lte('start_date', txnDate)
-              .gte('end_date', txnDate)
-              .eq('status', 'open')
-              .maybeSingle();
 
-          if (periodError) {
-              alert(`تم إنشاء الحجز بنجاح، ولكن حدث خطأ في التحقق من الفترة المحاسبية: ${periodError.message || 'خطأ غير معروف'}`);
-          } else if (!period) {
-              alert(`تم إنشاء الحجز بنجاح، ولكن لا توجد فترة محاسبية مفتوحة لتاريخ ${txnDate}. يرجى فتح فترة محاسبية أولاً ثم إعادة محاولة تسجيل العربون.`);
-          } else {
-          // A. Post Transaction (Journal Entry)
-          const { data: journalId, error: transactionError } = await supabase.rpc('post_transaction', {
-              p_transaction_type: data.depositResult.accountType || 'advance_payment',
-              p_source_type: 'booking',
-              p_source_id: booking.id,
-              p_amount: data.depositResult.depositAmount,
-              p_customer_id: data.customer.id,
-              p_payment_method_id: data.depositResult.paymentMethodId,
-              p_transaction_date: txnDate,
-              p_description: data.depositResult.statement || `عربون حجز - ${data.customer.full_name}`
-          });
+          const { data: existingPayments, error: existingPayError } = await supabase
+            .from('payments')
+            .select('id, amount')
+            .eq('customer_id', data.customer.id)
+            .eq('booking_id', booking.id);
+          const hasExistingDeposit = !existingPayError && Array.isArray(existingPayments) && existingPayments.length > 0;
 
-          if (transactionError) {
-              console.error('Failed to post transaction:', JSON.stringify(transactionError, null, 2));
-              // Show actual error to help debugging
-              alert(`تم إنشاء الحجز بنجاح، ولكن حدث خطأ في تسجيل المعاملة المالية: ${transactionError.message || transactionError.details || JSON.stringify(transactionError)}`);
-          } else {
-              // B. Create Payment Record (for Payments Page)
-              const { error: paymentError } = await supabase
+          if (hasExistingDeposit && mode === 'complete') {
+            try {
+              if (invoice?.id) {
+                const { data: unlinkedPmts } = await supabase
                   .from('payments')
-                  .insert({
-                      customer_id: data.customer.id,
-                      invoice_id: invoice?.id, // Link to invoice if created
-                      payment_method_id: data.depositResult.paymentMethodId,
-                      amount: data.depositResult.depositAmount,
-                      payment_date: new Date().toISOString(),
-                      journal_entry_id: journalId, // Link to Journal Entry
-                      description: data.depositResult.statement || `عربون حجز - ${data.customer.full_name}`,
-                      status: 'posted'
-                  });
-              
-              if (paymentError) {
-                   console.error('Failed to create payment record:', paymentError);
+                  .select('id')
+                  .eq('booking_id', booking.id)
+                  .is('invoice_id', null)
+                  .maybeSingle();
+                if (unlinkedPmts && !Array.isArray(unlinkedPmts) && (unlinkedPmts as any)?.id) {
+                  await supabase
+                    .from('payments')
+                    .update({ invoice_id: invoice.id })
+                    .eq('id', (unlinkedPmts as any).id);
+                } else if (Array.isArray(unlinkedPmts) && unlinkedPmts.length > 0 && (unlinkedPmts[0] as any)?.id) {
+                  await supabase
+                    .from('payments')
+                    .update({ invoice_id: invoice.id })
+                    .eq('id', (unlinkedPmts[0] as any).id);
+                }
               }
-              try {
-                const { data: { user: actor } } = await supabase.auth.getUser();
-                await supabase.from('system_events').insert({
-                  event_type: 'advance_payment_posted',
-                  message: `تسجيل عربون للحجز ${booking.id}`,
-                  booking_id: booking.id,
-                  customer_id: data.customer.id,
-                  payload: {
-                    amount: data.depositResult.depositAmount,
-                    journal_entry_id: journalId,
-                    actor_id: actor?.id || null,
-                    actor_email: actor?.email || null
-                  }
-                });
-              } catch {}
+            } catch (linkErr) {
+              console.warn('Could not link existing payment to invoice:', linkErr);
+            }
           }
+
+          if (!hasExistingDeposit) {
+            const { data: period, error: periodError } = await supabase
+                .from('accounting_periods')
+                .select('id')
+                .lte('start_date', txnDate)
+                .gte('end_date', txnDate)
+                .eq('status', 'open')
+                .maybeSingle();
+
+            if (periodError) {
+                alert(`تم حفظ الحجز بنجاح، ولكن حدث خطأ في التحقق من الفترة المحاسبية: ${periodError.message || 'خطأ غير معروف'}`);
+            } else if (!period) {
+                alert(`تم حفظ الحجز بنجاح، ولكن لا توجد فترة محاسبية مفتوحة لتاريخ ${txnDate}. يرجى فتح فترة محاسبية أولاً ثم إعادة محاولة تسجيل العربون.`);
+            } else {
+            // A. Post Transaction (Journal Entry)
+            const { data: journalId, error: transactionError } = await supabase.rpc('post_transaction', {
+                p_transaction_type: data.depositResult.accountType || 'advance_payment',
+                p_source_type: 'booking',
+                p_source_id: booking.id,
+                p_amount: data.depositResult.depositAmount,
+                p_customer_id: data.customer.id,
+                p_payment_method_id: data.depositResult.paymentMethodId,
+                p_transaction_date: txnDate,
+                p_description: data.depositResult.statement || `عربون حجز - ${data.customer.full_name}`
+            });
+
+            if (transactionError) {
+                console.error('Failed to post transaction:', JSON.stringify(transactionError, null, 2));
+                alert(`تم حفظ الحجز بنجاح، ولكن حدث خطأ في تسجيل المعاملة المالية: ${transactionError.message || transactionError.details || JSON.stringify(transactionError)}`);
+            } else {
+                // B. Create Payment Record (for Payments Page)
+                const { error: paymentError } = await supabase
+                    .from('payments')
+                    .insert({
+                        customer_id: data.customer.id,
+                        booking_id: booking.id,
+                        invoice_id: invoice?.id,
+                        payment_method_id: data.depositResult.paymentMethodId,
+                        amount: data.depositResult.depositAmount,
+                        payment_date: new Date().toISOString(),
+                        journal_entry_id: journalId,
+                        description: data.depositResult.statement || `عربون حجز - ${data.customer.full_name}`,
+                        status: 'posted'
+                    });
+                
+                if (paymentError) {
+                     console.error('Failed to create payment record:', paymentError);
+                }
+                try {
+                  const { data: { user: actor } } = await supabase.auth.getUser();
+                  await supabase.from('system_events').insert({
+                    event_type: 'advance_payment_posted',
+                    message: `تسجيل عربون للحجز ${booking.id}`,
+                    booking_id: booking.id,
+                    customer_id: data.customer.id,
+                    payload: {
+                      amount: data.depositResult.depositAmount,
+                      journal_entry_id: journalId,
+                      actor_id: actor?.id || null,
+                      actor_email: actor?.email || null,
+                      complete_mode: mode === 'complete'
+                    }
+                  });
+                } catch {}
+            }
+            }
           }
       }
 
@@ -643,26 +736,26 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
   const hasExtras = extrasTotal > 0;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20">
+    <div className="max-w-5xl mx-auto space-y-5 pb-3">
       
       {error && (
-        <div className="bg-red-50 border-2 border-red-100 text-red-700 p-5 rounded-[2rem] flex items-center gap-4 shadow-sm animate-pulse">
+        <div className="bg-red-50 border-2 border-red-100 text-red-700 p-5 rounded-2xl flex items-center gap-4 shadow-sm animate-pulse">
           <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center text-white">
             <AlertCircle size={24} />
           </div>
-          <span className="font-black text-sm">{error}</span>
+          <span className="font-semibold text-sm">{error}</span>
         </div>
       )}
 
       {/* 0. Header Overview Card */}
-      <div className="bg-gradient-to-br from-emerald-50 via-white to-white ring-1 ring-emerald-100/70 rounded-2xl p-5 sm:p-6 shadow-sm">
+      <div className="bg-stone-50/60 ring-1 ring-stone-200/80 rounded-2xl p-5 sm:p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white flex items-center justify-center shadow-sm ring-1 ring-emerald-900/20 shrink-0">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-900 text-white flex items-center justify-center shadow-sm ring-1 ring-emerald-900/20 shrink-0">
               <Zap size={22} />
             </div>
             <div className="min-w-0">
-              <h2 className="text-lg sm:text-xl font-black text-emerald-950 leading-tight">مراجعة وتأكيد الحجز</h2>
+              <h2 className="text-lg sm:text-xl font-semibold text-emerald-950 leading-tight">مراجعة وتأكيد الحجز</h2>
               <div className="mt-1 text-[11px] sm:text-xs font-bold text-emerald-900/70">
                 راجع التفاصيل قبل إنشاء الحجز النهائي
               </div>
@@ -676,12 +769,12 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
 
           <div className="flex flex-wrap gap-2 lg:justify-end">
             <div className="rounded-2xl bg-white/70 ring-1 ring-emerald-200/70 px-3 py-2">
-              <div className="text-[10px] font-black text-emerald-900/60">مدة الإقامة</div>
-              <div className="text-sm font-black text-emerald-900">{getDurationText()}</div>
+              <div className="text-[11px] font-semibold text-emerald-900/60">مدة الإقامة</div>
+              <div className="text-sm font-semibold text-emerald-900">{getDurationText()}</div>
             </div>
             <div className="rounded-2xl bg-white/70 ring-1 ring-emerald-200/70 px-3 py-2">
-              <div className="text-[10px] font-black text-emerald-900/60">نوع الحجز</div>
-              <div className="text-sm font-black text-emerald-900">
+              <div className="text-[11px] font-semibold text-emerald-900/60">نوع الحجز</div>
+              <div className="text-sm font-semibold text-emerald-900">
                 {data.bookingType === 'daily' ? 'يومي' : data.bookingType === 'monthly' ? 'شهري' : 'سنوي'}
               </div>
             </div>
@@ -689,25 +782,25 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         
         {/* Left/Main Column: Detailed Cards */}
         <div className="lg:col-span-8 space-y-8">
             
             {/* 1. Customer Card */}
-            <div className="bg-white border border-gray-100 rounded-[2.5rem] p-8 shadow-lg shadow-gray-50/50 group hover:border-blue-100 transition-colors">
+            <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
                       <User size={24} />
                     </div>
                     <div>
-                      <h3 className="font-black text-lg text-gray-900">بيانات العميل</h3>
-                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Guest Information</p>
+                      <h3 className="font-semibold text-lg text-gray-900">بيانات العميل</h3>
+                      <p className="text-[11px] text-gray-400 font-bold uppercase tracking-widest">Guest Information</p>
                     </div>
                   </div>
                   <div className="px-4 py-1.5 bg-gray-50 rounded-full border border-gray-100">
-                    <span className="text-[10px] font-black text-gray-500">
+                    <span className="text-[11px] font-semibold text-gray-500">
                       ID: {data.customer?.id?.slice(0, 8).toUpperCase()}
                     </span>
                   </div>
@@ -715,61 +808,61 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
 
                 <div className="grid grid-cols-2 gap-4 md:gap-8">
                     <div className="space-y-1">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">الاسم الكامل</span>
-                        <p className="text-sm md:text-base font-black text-gray-900 line-clamp-1">{data.customer?.full_name}</p>
+                        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-tighter">الاسم الكامل</span>
+                        <p className="text-sm md:text-base font-semibold text-gray-900 line-clamp-1">{data.customer?.full_name}</p>
                     </div>
                     <div className="space-y-1">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">رقم الجوال</span>
-                        <p className="text-sm md:text-base font-black text-gray-900 dir-ltr">{data.customer?.phone}</p>
+                        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-tighter">رقم الجوال</span>
+                        <p className="text-sm md:text-base font-semibold text-gray-900 dir-ltr">{data.customer?.phone}</p>
                     </div>
                     <div className="space-y-1">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">نوع العميل</span>
+                        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-tighter">نوع العميل</span>
                         <div className="flex">
-                          <span className="inline-flex items-center px-3 py-1 rounded-xl text-[10px] md:text-xs font-black bg-blue-50 text-blue-700 border border-blue-100">
+                          <span className="inline-flex items-center px-3 py-1 rounded-xl text-[11px] md:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
                               {data.customer?.customer_type === 'individual' ? 'أفراد' : 
                                data.customer?.customer_type === 'company' ? 'شركات' : 'منصة حجز'}
                           </span>
                         </div>
                     </div>
                     <div className="space-y-1">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">رقم الهوية / السجل</span>
-                        <p className="text-sm md:text-base font-black text-gray-900">{data.customer?.national_id || data.customer?.commercial_register || '-'}</p>
+                        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-tighter">رقم الهوية / السجل</span>
+                        <p className="text-sm md:text-base font-semibold text-gray-900">{data.customer?.national_id || data.customer?.commercial_register || '-'}</p>
                     </div>
                 </div>
             </div>
 
             {/* 2. Unit & Stay Card */}
-            <div className="bg-white border border-gray-100 rounded-[2.5rem] p-8 shadow-lg shadow-gray-50/50 group hover:border-emerald-100 transition-colors">
+            <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
                       <Home size={24} />
                     </div>
                     <div>
-                      <h3 className="font-black text-lg text-gray-900">تفاصيل الوحدة والإقامة</h3>
-                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Unit & Stay Details</p>
+                      <h3 className="font-semibold text-lg text-gray-900">تفاصيل الوحدة والإقامة</h3>
+                      <p className="text-[11px] text-gray-400 font-bold uppercase tracking-widest">Unit & Stay Details</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 md:gap-8">
-                    <div className="p-4 md:p-5 bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col md:flex-row items-center md:items-start gap-3 md:gap-4 text-center md:text-right">
+                    <div className="p-4 md:p-5 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col md:flex-row items-center md:items-start gap-3 md:gap-4 text-center md:text-right">
                       <div className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-xl flex items-center justify-center text-gray-400 shadow-sm shrink-0">
                         <MapPin size={20} className="md:w-6 md:h-6" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-black text-gray-400 uppercase block mb-0.5">الوحدة</span>
-                        <p className="text-xs md:text-base font-black text-gray-900 line-clamp-2">{data.unitType?.name} - {data.unit?.unit_number}</p>
+                        <span className="text-[11px] font-semibold text-gray-400 uppercase block mb-0.5">الوحدة</span>
+                        <p className="text-xs md:text-base font-semibold text-gray-900 line-clamp-2">{data.unitType?.name} - {data.unit?.unit_number}</p>
                       </div>
                     </div>
 
-                    <div className="p-4 md:p-5 bg-emerald-50/50 rounded-[2rem] border border-emerald-100 flex flex-col md:flex-row items-center md:items-start gap-3 md:gap-4 text-center md:text-right">
+                    <div className="p-4 md:p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100 flex flex-col md:flex-row items-center md:items-start gap-3 md:gap-4 text-center md:text-right">
                       <div className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-xl flex items-center justify-center text-emerald-600 shadow-sm shrink-0">
                         <Calendar size={20} className="md:w-6 md:h-6" />
                       </div>
                       <div>
-                        <span className="text-[10px] font-black text-emerald-600 uppercase block mb-0.5">التواريخ</span>
-                        <p className="text-[10px] md:text-sm font-black text-emerald-900 leading-tight">
+                        <span className="text-[11px] font-semibold text-emerald-600 uppercase block mb-0.5">التواريخ</span>
+                        <p className="text-[11px] md:text-sm font-semibold text-emerald-900 leading-tight">
                           {data.startDate && format(data.startDate, 'dd MMM')} → {data.endDate && format(data.endDate, 'dd MMM yyyy')}
                         </p>
                       </div>
@@ -780,10 +873,10 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
 
         {/* Right Column: Financial Summary & Actions */}
         <div className="lg:col-span-4 space-y-8">
-            <div className="bg-gradient-to-l from-emerald-800 via-emerald-900 to-emerald-950 text-white rounded-3xl p-5 shadow-sm relative overflow-hidden sticky top-8 ring-1 ring-emerald-900/20">
+            <div className="bg-emerald-950 text-white rounded-2xl p-5 shadow-sm relative overflow-hidden lg:sticky lg:top-24 ring-1 ring-emerald-900/20">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-[110px] -mr-32 -mt-32 pointer-events-none"></div>
                 
-                <h3 className="font-black text-base text-white mb-4 flex items-center gap-2.5">
+                <h3 className="font-semibold text-base text-white mb-4 flex items-center gap-2.5">
                     <div className="w-10 h-10 bg-white/10 rounded-2xl flex items-center justify-center border border-white/10 backdrop-blur-md shadow-sm">
                       <Calculator size={22} className="text-emerald-100" />
                     </div>
@@ -793,18 +886,18 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
                 <div className="space-y-3 text-[13px]">
                     <div className="flex justify-between items-center text-white/75 font-bold gap-3">
                         <span className="shrink-0">{unitRateSummary.label}</span>
-                        <span className="text-white font-black text-right">{unitRateSummary.value}</span>
+                        <span className="text-white font-semibold text-right">{unitRateSummary.value}</span>
                     </div>
                     <div className="flex justify-between items-center text-white/75 font-bold">
                         <span>المجموع الفرعي</span>
-                        <span className="text-white font-black">{data.pricingResult?.subtotal?.toLocaleString()} <span className="text-[10px] font-normal">ر.س</span></span>
+                        <span className="text-white font-semibold">{data.pricingResult?.subtotal?.toLocaleString()} <span className="text-[11px] font-normal">ر.س</span></span>
                     </div>
                     
                     {hasExtras && (
                       <div className="pt-3 border-t border-white/10 space-y-2.5">
-                        <span className="text-[10px] font-black text-white/55">الخدمات الإضافية</span>
+                        <span className="text-[11px] font-semibold text-white/55">الخدمات الإضافية</span>
                         {data.pricingResult?.extras.map((extra, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-[11px] font-black text-emerald-100/90">
+                          <div key={idx} className="flex justify-between items-center text-[11px] font-semibold text-emerald-100/90">
                               <span>+ {extra.name}</span>
                               <span>{extra.amount} ر.س</span>
                           </div>
@@ -813,43 +906,43 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
                     )}
 
                     {hasDiscount && (
-                        <div className="flex justify-between items-center bg-rose-500/20 p-4 rounded-2xl border border-rose-500/30 text-rose-400 font-black text-sm shadow-inner">
+                        <div className="flex justify-between items-center bg-rose-500/20 p-4 rounded-2xl border border-rose-500/30 text-rose-400 font-semibold text-sm shadow-inner">
                             <span>الخصم الممنوح</span>
-                            <span className="text-lg">- {data.pricingResult?.discountAmount?.toLocaleString()} <span className="text-[10px]">ر.س</span></span>
+                            <span className="text-lg">- {data.pricingResult?.discountAmount?.toLocaleString()} <span className="text-[11px]">ر.س</span></span>
                         </div>
                     )}
 
-                    <div className="flex justify-between items-center text-white/60 font-black pt-0.5 text-[10px] tracking-wide">
+                    <div className="flex justify-between items-center text-white/60 font-semibold pt-0.5 text-[11px] tracking-wide">
                         <span>الضريبة المضافة (15%)</span>
                         <span className="text-white/85 text-[12px]">{data.pricingResult?.taxAmount?.toLocaleString()} ر.س</span>
                     </div>
 
                     <div className="pt-4 border-t border-white/10 flex justify-between items-end">
                       <div className="space-y-2">
-                        <span className="text-[10px] font-black text-white/55 tracking-wide">الإجمالي النهائي</span>
+                        <span className="text-[11px] font-semibold text-white/55 tracking-wide">الإجمالي النهائي</span>
                         <div className="flex items-center gap-2">
                           <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.5)]"></div>
-                          <span className="text-[10px] text-emerald-100 font-black tracking-tight">شامل الضريبة</span>
+                          <span className="text-[11px] text-emerald-100 font-semibold tracking-tight">شامل الضريبة</span>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-3xl font-black text-white tracking-tighter leading-none mb-1">
+                        <div className="text-3xl font-semibold text-white tracking-tighter leading-none mb-1">
                           {data.pricingResult?.finalTotal?.toLocaleString()}
                         </div>
-                        <span className="text-[10px] text-white/55 font-black tracking-wide">ريال سعودي</span>
+                        <span className="text-[11px] text-white/55 font-semibold tracking-wide">ريال سعودي</span>
                       </div>
                     </div>
 
                     <div className="bg-white/5 border border-white/10 rounded-3xl p-4 space-y-3 mt-5 shadow-inner">
-                        <div className="flex justify-between items-center text-[12px] font-black">
+                        <div className="flex justify-between items-center text-[12px] font-semibold">
                             <span className="text-white/75">العربون المدفوع</span>
                             <span className="text-emerald-100 text-[13px]">-{data.depositResult?.depositAmount?.toLocaleString()} ر.س</span>
                         </div>
                         <div className="pt-3 border-t border-white/10 flex justify-between items-center">
-                            <span className="text-[10px] font-black text-white/55 tracking-wide">المتبقي للتحصيل</span>
-                            <span className="text-xl font-black text-white tracking-tight">
+                            <span className="text-[11px] font-semibold text-white/55 tracking-wide">المتبقي للتحصيل</span>
+                            <span className="text-xl font-semibold text-white tracking-tight">
                                 {( (data.pricingResult?.finalTotal || 0) - (data.depositResult?.depositAmount || 0) ).toLocaleString()}
-                                <span className="text-[10px] text-white/55 font-normal mr-2">ر.س</span>
+                                <span className="text-[11px] text-white/55 font-normal mr-2">ر.س</span>
                             </span>
                         </div>
                     </div>
@@ -871,7 +964,7 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
                                     <AlertCircle size={18} />
                                 </div>
                                 <div className="space-y-1">
-                                    <p className="text-[12px] font-black leading-tight">{note.text}</p>
+                                    <p className="text-[12px] font-semibold leading-tight">{note.text}</p>
                                 </div>
                             </div>
                         ))}
@@ -884,8 +977,8 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
                         onClick={handleConfirmStep}
                         disabled={loading || validationNotes.some(n => n.type === 'error')}
                         className={`
-                            w-full relative overflow-hidden text-white font-black py-4 px-5 rounded-2xl shadow-sm transition-all duration-300 flex justify-center items-center gap-3 group
-                            bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800
+                            w-full relative overflow-hidden text-white font-semibold py-4 px-5 rounded-2xl shadow-sm transition-all duration-300 flex justify-center items-center gap-3 group
+                            bg-emerald-900 hover:bg-emerald-800
                             ${(loading || validationNotes.some(n => n.type === 'error')) ? 'opacity-30 cursor-not-allowed grayscale' : ''}
                         `}
                     >
@@ -933,7 +1026,7 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
                         else onBack();
                     }}
                     disabled={loading}
-                    className="w-full mt-3 bg-white/5 border border-white/10 text-white/70 font-black py-3.5 px-5 rounded-2xl hover:bg-white/10 hover:text-white transition-all text-xs"
+                    className="w-full mt-3 bg-white/5 border border-white/10 text-white/70 font-semibold py-3.5 px-5 rounded-2xl hover:bg-white/10 hover:text-white transition-all text-xs"
                 >
                     {confirmStep > 0 ? 'إلغاء وإعادة البدء' : t('رجوع للتعديل', 'Back to edit')}
                 </button>
@@ -943,3 +1036,4 @@ export const ConfirmStep: React.FC<ConfirmStepProps> = ({ data, onSuccess, onBac
     </div>
   );
 };
+

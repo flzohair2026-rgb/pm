@@ -249,13 +249,13 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
   if (selectedCustomer && !isCreating) {
     return (
       <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto">
-        <div className="bg-gradient-to-br from-emerald-50 via-white to-white ring-1 ring-emerald-100/70 rounded-2xl p-4 flex justify-between items-center shadow-sm">
+        <div className="bg-stone-50/60 ring-1 ring-stone-200/80 rounded-2xl p-4 flex justify-between items-center shadow-sm">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-700">
               <User size={20} />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-emerald-950">{selectedCustomer.full_name}</h3>
+              <h3 className="text-base font-semibold text-emerald-950">{selectedCustomer.full_name}</h3>
               <div className="flex gap-3 text-xs text-gray-600 mt-0.5">
                 <span className="font-medium">{selectedCustomer.phone}</span>
                 <span className="text-gray-300">•</span>
@@ -271,15 +271,15 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           </button>
         </div>
 
-        <div className="bg-gradient-to-br from-emerald-50 via-white to-white ring-1 ring-emerald-100/70 rounded-2xl p-4 shadow-sm">
-          <label className="text-xs font-extrabold text-emerald-950 block mb-2">{t('مصدر الحجز', 'Booking source')}</label>
+        <div className="bg-stone-50/60 ring-1 ring-stone-200/80 rounded-2xl p-4 shadow-sm">
+          <label className="text-xs font-semibold text-emerald-950 block mb-2">{t('مصدر الحجز', 'Booking source')}</label>
           <div className="flex flex-wrap gap-2 mb-3">
             <button
               type="button"
               onClick={() => setBookingSource('reception')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 bookingSource === 'reception'
-                  ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
+                  ? 'bg-emerald-900 text-white shadow-sm'
                   : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
               }`}
             >
@@ -288,9 +288,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             <button
               type="button"
               onClick={() => setBookingSource('platform')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 bookingSource === 'platform'
-                  ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
+                  ? 'bg-emerald-900 text-white shadow-sm'
                   : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
               }`}
             >
@@ -299,9 +299,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             <button
               type="button"
               onClick={() => setBookingSource('broker')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 bookingSource === 'broker'
-                  ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
+                  ? 'bg-emerald-900 text-white shadow-sm'
                   : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
               }`}
             >
@@ -310,9 +310,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           </div>
           {bookingSource === 'platform' && (
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('منصة الحجز', 'Booking platform')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('منصة الحجز', 'Booking platform')}</label>
               <select
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 appearance-none bg-white"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 appearance-none bg-white"
                 value={platformName}
                 onChange={e => setPlatformName(e.target.value)}
               >
@@ -326,20 +326,20 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           {bookingSource === 'broker' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('اسم الوسيط', 'Broker name')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('اسم الوسيط', 'Broker name')}</label>
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={brokerName}
                   onChange={e => setBrokerName(e.target.value)}
                   placeholder={t('اسم الوسيط', 'Broker name')}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('رقم هوية الوسيط', 'Broker ID')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('رقم هوية الوسيط', 'Broker ID')}</label>
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={brokerId}
                   onChange={e => setBrokerId(e.target.value)}
                   placeholder={t('رقم الهوية الوطنية للوسيط', 'Broker national ID')}
@@ -352,7 +352,7 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
         <div className="flex justify-end">
           <button
             onClick={() => onNext(selectedCustomer, { bookingSource, platformName, brokerName, brokerId })}
-            className="bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white px-6 py-2.5 rounded-2xl font-extrabold hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all flex items-center gap-2 shadow-sm text-sm"
+            className="bg-emerald-900 text-white px-6 py-2.5 rounded-2xl font-semibold hover:bg-emerald-800 transition-all flex items-center gap-2 shadow-sm text-sm"
           >
             <span>{t('التالي: اختيار الوحدة', 'Next: Unit selection')}</span>
             <Check size={18} />
@@ -390,14 +390,14 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
               <div
                 key={customer.id}
                 onClick={() => setSelectedCustomer(customer)}
-                className="flex items-center justify-between p-3 ring-1 ring-emerald-100/70 bg-white/70 rounded-2xl hover:bg-emerald-50/60 cursor-pointer transition-all group shadow-sm"
+                className="flex items-center justify-between p-3 ring-1 ring-stone-200/80 bg-white/70 rounded-2xl hover:bg-emerald-50/60 cursor-pointer transition-all group shadow-sm"
               >
                 <div className="flex items-center gap-3">
                   <div className="h-10 w-10 bg-emerald-50 ring-1 ring-emerald-100 rounded-full flex items-center justify-center text-emerald-800 group-hover:bg-emerald-700 group-hover:text-white transition-colors duration-300">
                     <User size={20} />
                   </div>
                   <div>
-                    <div className="font-extrabold text-emerald-950 text-base group-hover:text-emerald-900 transition-colors">{customer.full_name}</div>
+                    <div className="font-semibold text-emerald-950 text-base group-hover:text-emerald-900 transition-colors">{customer.full_name}</div>
                     <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
                       <span className="flex items-center gap-1">
                         <span className="w-1 h-1 rounded-full bg-emerald-200 group-hover:bg-emerald-500"></span>
@@ -412,7 +412,7 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
                     </div>
                   </div>
                 </div>
-                <div className="px-3 py-1.5 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-extrabold ring-1 ring-emerald-200/70 group-hover:bg-emerald-100 transition-all">
+                <div className="px-3 py-1.5 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-semibold ring-1 ring-emerald-200/70 group-hover:bg-emerald-100 transition-all">
                   {t('اختيار', 'Select')}
                 </div>
               </div>
@@ -423,7 +423,7 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
                 <p className="text-gray-500 text-sm mb-4">{t(`لا توجد نتائج مطابقة لـ "${searchQuery}"`, `No results match "${searchQuery}"`)}</p>
                 <button
                   onClick={handleSmartCreate}
-                  className="px-6 py-2 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 text-emerald-950 rounded-2xl font-extrabold hover:from-emerald-100 transition-all flex items-center gap-2 mx-auto shadow-sm"
+                  className="px-6 py-2 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 text-emerald-950 rounded-2xl font-semibold hover:from-emerald-100 transition-all flex items-center gap-2 mx-auto shadow-sm"
                 >
                   <UserPlus size={18} />
                   <span>{t(`تسجيل "${searchQuery}" كعميل جديد`, `Register "${searchQuery}" as a new customer`)}</span>
@@ -435,7 +435,7 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           <div className="pt-4 border-t max-w-2xl mx-auto">
             <button
               onClick={() => setIsCreating(true)}
-              className="w-full py-3 border-2 border-dashed border-emerald-200 rounded-2xl text-emerald-900 font-extrabold hover:border-emerald-400 hover:bg-emerald-50 transition-all flex items-center justify-center gap-2 text-sm"
+              className="w-full py-3 border-2 border-dashed border-stone-200 rounded-2xl text-emerald-900 font-semibold hover:border-emerald-400 hover:bg-emerald-50 transition-all flex items-center justify-center gap-2 text-sm"
             >
               <Plus size={18} />
               <span>{t('تسجيل عميل جديد', 'Register new customer')}</span>
@@ -443,7 +443,7 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           </div>
         </>
       ) : (
-        <form onSubmit={handleCreateCustomer} className="max-w-3xl mx-auto bg-gradient-to-br from-emerald-50 via-white to-white ring-1 ring-emerald-100/70 rounded-3xl p-5 shadow-sm animate-in zoom-in-95 duration-300">
+        <form onSubmit={handleCreateCustomer} className="max-w-3xl mx-auto bg-stone-50/60 ring-1 ring-stone-200/80 rounded-3xl p-5 shadow-sm animate-in zoom-in-95 duration-300">
           <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
             <h3 className="text-base font-bold flex items-center gap-2 text-gray-800">
               <div className="p-2 bg-emerald-100 rounded-xl text-emerald-700">
@@ -461,14 +461,14 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           </div>
           
           <div className="mb-4">
-            <label className="text-xs font-extrabold text-emerald-950 block mb-1">{t('مصدر الحجز', 'Booking source')}</label>
+            <label className="text-xs font-semibold text-emerald-950 block mb-1">{t('مصدر الحجز', 'Booking source')}</label>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => setBookingSource('reception')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                   bookingSource === 'reception'
-                    ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
+                    ? 'bg-emerald-900 text-white shadow-sm'
                     : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
                 }`}
               >
@@ -477,9 +477,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
               <button
                 type="button"
                 onClick={() => setBookingSource('platform')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                   bookingSource === 'platform'
-                    ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
+                    ? 'bg-emerald-900 text-white shadow-sm'
                     : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
                 }`}
               >
@@ -488,9 +488,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
               <button
                 type="button"
                 onClick={() => setBookingSource('broker')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                   bookingSource === 'broker'
-                    ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white shadow-sm'
+                    ? 'bg-emerald-900 text-white shadow-sm'
                     : 'bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 hover:bg-emerald-50'
                 }`}
               >
@@ -501,9 +501,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('نوع العميل', 'Customer type')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('نوع العميل', 'Customer type')}</label>
               <select
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 bg-white"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 bg-white"
                 value={formData.customer_type}
                 onChange={e => {
                   const newType = e.target.value as any;
@@ -519,11 +519,11 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('الاسم الكامل', 'Full name')} <span className="text-red-500">*</span></label>
+              <label className="text-xs font-semibold text-emerald-950">{t('الاسم الكامل', 'Full name')} <span className="text-red-500">*</span></label>
               <input
                 required
                 type="text"
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                 value={formData.full_name || ''}
                 onChange={e => setFormData({...formData, full_name: e.target.value})}
                 placeholder={t('الاسم الثلاثي', 'Full name')}
@@ -531,11 +531,11 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('رقم الجوال', 'Mobile')} <span className="text-red-500">*</span></label>
+              <label className="text-xs font-semibold text-emerald-950">{t('رقم الجوال', 'Mobile')} <span className="text-red-500">*</span></label>
               <input
                 required
                 type="tel"
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal text-left"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal text-left"
                 dir="ltr"
                 placeholder="05xxxxxxxx"
                 value={formData.phone || ''}
@@ -544,10 +544,10 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('رقم الهوية / الإقامة', 'ID / Iqama')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('رقم الهوية / الإقامة', 'ID / Iqama')}</label>
               <input
                 type="text"
-                className={`w-full p-2.5 border ${nationalIdError ? 'border-red-500' : 'border-emerald-200'} rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal`}
+                className={`w-full p-2.5 border ${nationalIdError ? 'border-red-500' : 'border-emerald-200'} rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal`}
                 value={formData.national_id || ''}
                 onChange={e => {
                   const val = e.target.value;
@@ -572,9 +572,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
             
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('نوع وثيقة الهوية', 'Document type')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('نوع وثيقة الهوية', 'Document type')}</label>
               <select
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 appearance-none bg-white"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 appearance-none bg-white"
                 value={documentType}
                 onChange={e => setDocumentType(e.target.value)}
               >
@@ -590,11 +590,11 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
 
             <div className="space-y-1.5" ref={nationalityWrapperRef}>
-              <label className="text-xs font-extrabold text-emerald-950">{t('الجنسية', 'Nationality')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('الجنسية', 'Nationality')}</label>
               <div className="relative">
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={nationalityQuery}
                   onChange={e => {
                     setNationalityQuery(e.target.value);
@@ -631,10 +631,10 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
             
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('البريد الإلكتروني', 'Email')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('البريد الإلكتروني', 'Email')}</label>
               <input
                 type="email"
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal text-left"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal text-left"
                 value={formData.email || ''}
                 onChange={e => setFormData({...formData, email: e.target.value})}
                 placeholder="example@mail.com"
@@ -642,10 +642,10 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-extrabold text-emerald-950">{t('العنوان', 'Address')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('العنوان', 'Address')}</label>
               <input
                 type="text"
-                className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                 value={formData.address || ''}
                 onChange={e => setFormData({...formData, address: e.target.value})}
                 placeholder={t('المدينة - الحي', 'City - District')}
@@ -654,9 +654,9 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           </div>
           {formData.customer_type === 'individual' && (
             <div className="mt-4 space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-300">
-              <label className="text-xs font-extrabold text-emerald-950">{t('تفاصيل إضافية (المرافقين، العائلة، إلخ)', 'Additional details (companions, family, etc.)')}</label>
+              <label className="text-xs font-semibold text-emerald-950">{t('تفاصيل إضافية (المرافقين، العائلة، إلخ)', 'Additional details (companions, family, etc.)')}</label>
               <textarea
-                className="w-full p-3 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal h-24 resize-none"
+                className="w-full p-3 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal h-24 resize-none"
                 value={formData.details || ''}
                 onChange={e => setFormData({...formData, details: e.target.value})}
                 placeholder={t('اكتب هنا أسماء المرافقين (الزوجة، الأولاد) أو أي ملاحظات تشغيلية أخرى...', 'Write companions names or any operational notes...')}
@@ -670,20 +670,20 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           {formData.customer_type === 'company' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('السجل التجاري', 'Commercial register')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('السجل التجاري', 'Commercial register')}</label>
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={formData.commercial_register || ''}
                   onChange={e => setFormData({...formData, commercial_register: e.target.value})}
                   placeholder={t('رقم السجل التجاري', 'CR number')}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('اسم الشركة', 'Company name')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('اسم الشركة', 'Company name')}</label>
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={formData.company_name || ''}
                   onChange={e => setFormData({...formData, company_name: e.target.value})}
                   placeholder={t('اسم الشركة الكامل', 'Full company name')}
@@ -695,20 +695,20 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           {bookingSource === 'broker' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('اسم الوسيط', 'Broker name')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('اسم الوسيط', 'Broker name')}</label>
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={brokerName}
                   onChange={e => setBrokerName(e.target.value)}
                   placeholder={t('اسم الوسيط', 'Broker name')}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('رقم هوية الوسيط', 'Broker ID')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('رقم هوية الوسيط', 'Broker ID')}</label>
                 <input
                   type="text"
-                  className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
+                  className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 placeholder:text-gray-400 placeholder:font-normal"
                   value={brokerId}
                   onChange={e => setBrokerId(e.target.value)}
                   placeholder={t('رقم الهوية الوطنية للوسيط', 'Broker national ID')}
@@ -720,10 +720,10 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
           {bookingSource === 'platform' && (
             <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-emerald-950">{t('منصة الحجز', 'Booking platform')}</label>
+                <label className="text-xs font-semibold text-emerald-950">{t('منصة الحجز', 'Booking platform')}</label>
                 <div className="relative">
                   <select
-                    className="w-full p-2.5 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-extrabold text-emerald-950 appearance-none bg-white"
+                    className="w-full p-2.5 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all text-sm font-semibold text-emerald-950 appearance-none bg-white"
                     value={platformName}
                     onChange={e => setPlatformName(e.target.value)}
                   >
@@ -742,14 +742,14 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
             <button
               type="button"
               onClick={() => setIsCreating(false)}
-              className="px-4 py-2 ring-1 ring-emerald-200/70 bg-white/70 rounded-xl text-emerald-950 text-sm font-extrabold hover:bg-emerald-50 transition-colors"
+              className="px-4 py-2 ring-1 ring-emerald-200/70 bg-white/70 rounded-xl text-emerald-950 text-sm font-semibold hover:bg-emerald-50 transition-colors"
             >
               {t('إلغاء', 'Cancel')}
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-6 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-xl text-sm font-extrabold hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 disabled:opacity-50 flex items-center gap-2 shadow-sm transition-all"
+              className="px-6 py-2 bg-emerald-900 text-white rounded-xl text-sm font-semibold hover:bg-emerald-800 disabled:opacity-50 flex items-center gap-2 shadow-sm transition-all"
             >
               {saving && <Loader2 className="animate-spin" size={16} />}
               {t('حفظ العميل', 'Save customer')}
@@ -760,3 +760,4 @@ export const CustomerStep: React.FC<CustomerStepProps> = ({ onNext, initialCusto
     </div>
   );
 };
+

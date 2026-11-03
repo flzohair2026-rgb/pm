@@ -4,16 +4,20 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { format, addDays, startOfMonth, addMonths, differenceInDays, isSameDay } from 'date-fns';
 import { 
-  ArrowLeft, Printer, Mail, MessageCircle, CreditCard, 
+  ArrowLeft, ArrowRight, Printer, Mail, MessageCircle, CreditCard, 
   CheckCircle, Check as CheckIcon, Banknote, Calendar, User, Home, FileText,
   AlertCircle, Plus, X, Loader2, LogIn, LogOut, Ban, Clock, Edit, Trash2,
-  Bell, Timer, AlertTriangle, AlertOctagon, DollarSign, PieChart, Save, Edit2, ExternalLink, RefreshCw, Send, History, MapPin, Phone, Hash, Tag, BarChart2, Briefcase, Building, Layers, Search, ChevronDown, ChevronUp, MoreVertical, Key, Shield, Settings, HelpCircle, Power, UserPlus, Users, LayoutDashboard, Database, Activity, Lock, Unlock, Eye, EyeOff, Check, AlertOctagon as AlertOctagonIcon
+  Bell, Timer, AlertTriangle, AlertOctagon, DollarSign, PieChart, Save, Edit2, ExternalLink, RefreshCw, Send, History, MapPin, Phone, Hash, Tag, BarChart2, Briefcase, Building, Layers, Search, ChevronDown, ChevronUp, MoreVertical, Key, Shield, Settings, HelpCircle, Power, UserPlus, Users, LayoutDashboard, Database, Activity, Lock, Unlock, Eye, EyeOff, Check, AlertOctagon as AlertOctagonIcon, Zap, Undo2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import { useUserRole } from '@/hooks/useUserRole';
 import ExtendBookingModal from './ExtendBookingModal';
+import { createInvoiceFinancialsLookup } from '@/lib/bookings/invoice-financials';
+import BookingHelpHint from './BookingHelpHint';
+import BookingOverviewStrip from './BookingOverviewStrip';
+import styles from './BookingDetails.module.css';
 
 interface BookingDetailsProps {
   booking: any;
@@ -865,7 +869,7 @@ export default function BookingDetails({ booking, transactions: initialTransacti
   const [quickGuideMinimized, setQuickGuideMinimized] = useState(true);
   const [quickGuideOpen, setQuickGuideOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [helpHintIndex, setHelpHintIndex] = useState(0);
+
   const printFrameRef = useRef<HTMLIFrameElement | null>(null);
   const printLoadTokenRef = useRef(0);
   const alertsRef = useRef<HTMLDivElement | null>(null);
@@ -1262,28 +1266,6 @@ export default function BookingDetails({ booking, transactions: initialTransacti
       window.removeEventListener('scroll', update, true);
     };
   }, [coachOpen, coachStepIndex, coachSteps]);
-  useEffect(() => {
-    const loadExtensionEvents = async () => {
-      const { data } = await supabase
-        .from('system_events')
-        .select('id,created_at,payload')
-        .eq('event_type', 'booking_extension_invoice_period')
-        .eq('booking_id', booking.id)
-        .order('created_at', { ascending: false });
-      const map: Record<string, { period_start: string; period_end: string }> = {};
-      (data || []).forEach((ev: any) => {
-        const invoiceId = ev?.payload?.invoice_id;
-        const periodStart = ev?.payload?.period_start;
-        const periodEnd = ev?.payload?.period_end;
-        if (!invoiceId || !periodStart || !periodEnd) return;
-        const key = String(invoiceId);
-        if (map[key]) return;
-        map[key] = { period_start: String(periodStart), period_end: String(periodEnd) };
-      });
-      setExtensionInvoicePeriods(map);
-    };
-    loadExtensionEvents();
-  }, [booking.id]);
   const printVoucher = (ev: any) => {
     const vt = ev?.payload?.voucher_type;
     const amount = Number(ev?.payload?.amount) || 0;
@@ -1450,98 +1432,10 @@ export default function BookingDetails({ booking, transactions: initialTransacti
   
   const remainingAmount = totalAmount - paidAmount;
 
-  const getInvoiceFinancials = (invoiceId: string) => {
-    const inv = invoices.find(i => i.id === invoiceId);
-    if (!inv) return { paid: 0, remaining: 0, status: 'draft' };
-    
-    const total = Number(inv.total_amount) || 0;
-    if (inv.status === 'void') return { paid: 0, remaining: 0, status: 'void' };
-    if (inv.status === 'draft') return { paid: 0, remaining: total, status: 'draft' };
-
-    // 1. Explicitly linked payments (Direct or Allocated)
-    let explicitlyPaid = 0;
-    const processedPaymentIdsForThisInv = new Set<string>();
-
-    // First, sum allocations for this invoice
-    const invoiceAllocations = (allocations || []).filter(a => a.invoice_id === invoiceId);
-    invoiceAllocations.forEach(a => {
-      explicitlyPaid += (Number(a.amount) || 0);
-      processedPaymentIdsForThisInv.add(a.payment_id);
-    });
-
-    // Then, add direct payments that don't have ANY allocations
-    const directLinks = (directPayments || []).filter(p => p.invoice_id === invoiceId && !processedPaymentIdsForThisInv.has(p.id));
-    directLinks.forEach(p => {
-      const hasAnyAlloc = (allocations || []).some(a => a.payment_id === p.id);
-      if (!hasAnyAlloc) {
-        explicitlyPaid += (Number(p.amount) || 0);
-      }
-    });
-    
-    // 2. Unallocated Payments for this booking (FIFO)
-    // Total Paid for booking (truth from journal entries)
-    const bookingTotalPaid = paidAmount;
-    
-    // Sum of ALL explicit payments across ALL invoices
-    const allInvoicesExplicitlyPaid = invoices.reduce((sum, currentInv) => {
-        if (currentInv.status === 'void' || currentInv.status === 'draft') return sum;
-        
-        let invExplicit = 0;
-        const invAllocs = (allocations || []).filter(a => a.invoice_id === currentInv.id);
-        const invProcessedIds = new Set<string>();
-        invAllocs.forEach(a => {
-          invExplicit += (Number(a.amount) || 0);
-          invProcessedIds.add(a.payment_id);
-        });
-
-        const invDirects = (directPayments || []).filter(p => p.invoice_id === currentInv.id && !invProcessedIds.has(p.id));
-        invDirects.forEach(p => {
-          const hasAnyAlloc = (allocations || []).some(a => a.payment_id === p.id);
-          if (!hasAnyAlloc) invExplicit += (Number(p.amount) || 0);
-        });
-
-        return sum + invExplicit;
-    }, 0);
-    
-    let unallocated = Math.max(0, bookingTotalPaid - allInvoicesExplicitlyPaid);
-    
-    // Distribute unallocated to invoices in order of creation (FIFO)
-    let currentPaid = explicitlyPaid;
-    const sortedActiveInvoices = [...invoices]
-        .filter(i => i.status !== 'void' && i.status !== 'draft')
-        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    
-    for (const i of sortedActiveInvoices) {
-        const iTotal = Number(i.total_amount) || 0;
-        
-        let iExplicit = 0;
-        const iAllocs = (allocations || []).filter(a => a.invoice_id === i.id);
-        const iProcIds = new Set<string>();
-        iAllocs.forEach(a => {
-          iExplicit += (Number(a.amount) || 0);
-          iProcIds.add(a.payment_id);
-        });
-        const iDirects = (directPayments || []).filter(p => p.invoice_id === i.id && !iProcIds.has(p.id));
-        iDirects.forEach(p => {
-          if (!(allocations || []).some(a => a.payment_id === p.id)) iExplicit += (Number(p.amount) || 0);
-        });
-
-        const iRemaining = Math.max(0, iTotal - iExplicit);
-        
-        const fromUnallocated = Math.min(iRemaining, unallocated);
-        if (i.id === invoiceId) {
-            currentPaid += fromUnallocated;
-            break;
-        }
-        unallocated -= fromUnallocated;
-    }
-
-    const remaining = Math.max(0, total - currentPaid);
-    const status = remaining <= 0.01 ? 'paid' : 'posted';
-    
-    return { paid: currentPaid, remaining, status };
-  };
-
+  const getInvoiceFinancials = useMemo(
+    () => createInvoiceFinancialsLookup(invoices, allocations, directPayments, paidAmount),
+    [invoices, allocations, directPayments, paidAmount]
+  );
   const getInvoiceRemaining = (invoiceId: string) => getInvoiceFinancials(invoiceId).remaining;
 
   // Sync state with props
@@ -3768,17 +3662,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
     (hasEjarApproval ? 1 : 0) +
     (hasEjarNeedsDocumentation ? 1 : 0);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!helpHints || helpHints.length === 0) return;
-    const id = window.setInterval(() => {
-      setHelpHintIndex((i) => (i + 1) % helpHints.length);
-    }, 2400);
-    return () => window.clearInterval(id);
-  }, [booking.id, helpHints.length]);
-
   return (
-    <div className="space-y-6 overflow-x-hidden">
+    <div className={`${styles.page} space-y-5`}>
       {showHelpModal && (
         <div className="fixed inset-0 z-[60]">
           <div className="absolute inset-0 bg-black/40" onClick={() => setShowHelpModal(false)} />
@@ -3787,7 +3672,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               <div className="px-4 py-3 border-b bg-white flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <HelpCircle size={18} className="text-gray-700" />
-                  <div className="font-black text-gray-900 text-sm truncate">دليل استخدام صفحة تفاصيل الحجز</div>
+                  <div className="font-semibold text-gray-900 text-sm truncate">دليل استخدام صفحة تفاصيل الحجز</div>
                 </div>
                 <button
                   type="button"
@@ -3800,12 +3685,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
               <div className="max-h-[78vh] overflow-y-auto p-4 space-y-4 text-sm text-gray-900">
                 <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50">
-                  <div className="font-black mb-2">أولاً: اتبع الخطوات حسب حالة الحجز</div>
+                  <div className="font-semibold mb-2">أولاً: اتبع الخطوات حسب حالة الحجز</div>
                   <div className="text-xs text-gray-700 whitespace-pre-line leading-6">{quickGuide.body}</div>
                 </div>
 
                 <div className="border border-gray-200 rounded-2xl p-4">
-                  <div className="font-black mb-2">ثانياً: ماذا يفعل كل زر؟</div>
+                  <div className="font-semibold mb-2">ثانياً: ماذا يفعل كل زر؟</div>
                   <div className="space-y-2 text-xs text-gray-700 leading-6">
                     <div>زر "دخول / تم توقيع الاستلام": يسجل دخول العميل ويصدر الفاتورة ويرحل القيود لضبط الحسابات.</div>
                     <div>زر "خروج": يسجل خروج العميل (إخلاء) ويطلق إجراءات ما بعد الخروج مثل أحداث التنظيف والحسابات.</div>
@@ -3819,7 +3704,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 </div>
 
                 <div className="border border-gray-200 rounded-2xl p-4">
-                  <div className="font-black mb-2">ثالثاً: تنبيه الصلاحيات</div>
+                  <div className="font-semibold mb-2">ثالثاً: تنبيه الصلاحيات</div>
                   <div className="text-xs text-gray-700 leading-6">
                     بعض الأزرار الحساسة مثل التصحيح/الترحيل اليدوي/التعديل/الإلغاء/الحذف محجوبة لغير الأدمن لحماية الحسابات ومنع أخطاء غير مقصودة.
                   </div>
@@ -3838,7 +3723,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               <div className="px-4 py-3 border-b bg-white flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Printer size={18} className="text-gray-700" />
-                  <div className="font-black text-gray-900 text-sm truncate">{printPreviewTitle}</div>
+                  <div className="font-semibold text-gray-900 text-sm truncate">{printPreviewTitle}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -3853,7 +3738,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         alert('تعذر بدء الطباعة من المعاينة. استخدم خيار فتح في تبويب.');
                       }
                     }}
-                    className="px-3 py-2 rounded-2xl bg-blue-600 text-white text-xs font-black hover:bg-blue-700"
+                    className="px-3 py-2 rounded-2xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700"
                   >
                     طباعة
                   </button>
@@ -3861,7 +3746,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     href={printPreviewUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-3 py-2 rounded-2xl border bg-white hover:bg-gray-50 text-xs font-black text-gray-900"
+                    className="px-3 py-2 rounded-2xl border bg-white hover:bg-gray-50 text-xs font-semibold text-gray-900"
                   >
                     فتح
                   </a>
@@ -3922,7 +3807,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <AlertTriangle size={18} />
               </div>
               <div className="space-y-1">
-                <div className="text-sm font-black text-gray-900">الحجز بانتظار العربون</div>
+                <div className="text-sm font-semibold text-gray-900">الحجز بانتظار العربون</div>
                 <div className="text-xs text-gray-700 leading-5">
                   بعض الأزرار مثل تسجيل الدخول والطباعة تظهر بعد تسجيل دفعة.
                   أي دفعة—even لو مبلغ بسيط—تُعتبر تأكيد للحجز.
@@ -3970,7 +3855,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           >
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
-                <div className="text-sm font-black text-gray-900">{coachSteps[coachStepIndex]?.title}</div>
+                <div className="text-sm font-semibold text-gray-900">{coachSteps[coachStepIndex]?.title}</div>
                 <div className="text-xs text-gray-600 leading-5">{coachSteps[coachStepIndex]?.body}</div>
               </div>
               <button
@@ -3988,7 +3873,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </button>
             </div>
             <div className="mt-3 flex items-center justify-between">
-              <div className="text-[10px] font-bold text-gray-500">
+              <div className="text-[11px] font-bold text-gray-500">
                 {coachStepIndex + 1}/{coachSteps.length}
               </div>
               <div className="flex items-center gap-2">
@@ -4017,7 +3902,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     }
                     setCoachStepIndex(next);
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-700"
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700"
                 >
                   التالي
                 </button>
@@ -4027,7 +3912,10 @@ if (activeInvoice && activeInvoice.status === 'draft') {
         </div>
       )}
 
-      <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <BookingOverviewStrip guest={booking.customer?.full_name} unit={booking.unit?.unit_number}
+        checkIn={formatDisplayDate(booking.check_in)} checkOut={formatDisplayDate(booking.check_out)} status={booking.status}
+        total={totalAmount} paid={paidAmount} remaining={remainingAmount} />
+      <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-5 flex flex-col gap-5">
         <div className="flex items-center gap-3">
           <Link
             href="/bookings-list"
@@ -4037,17 +3925,17 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             <ArrowLeft size={22} className="text-gray-900" />
           </Link>
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+            <h1 className="text-lg sm:text-xl font-bold text-stone-900 flex flex-wrap items-center gap-2">
               <span>تفاصيل الحجز</span>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] sm:text-xs font-mono font-extrabold px-2 py-0.5 rounded-full bg-emerald-900 text-white">
+                <span className="text-[11px] sm:text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-900 text-white">
                   #{booking.id?.slice(0, 8)}
                 </span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setShowHelpModal(true)}
-                    className="p-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 animate-pulse"
+                    className="p-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
                     title="دليل استخدام الصفحة"
                   >
                     <HelpCircle size={16} />
@@ -4057,9 +3945,9 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       type="button"
                       onClick={() => setAlertsOpen((v) => !v)}
                       className={cn(
-                        'flex items-center gap-2 px-2.5 py-1.5 rounded-xl ring-1 shadow-sm transition-all text-[11px] font-extrabold',
+                        'flex items-center gap-2 px-2.5 py-1.5 rounded-xl ring-1 shadow-sm transition-all text-[11px] font-semibold',
                         alertsOpen
-                          ? 'bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white ring-emerald-900/20'
+                          ? 'bg-emerald-900 text-white ring-emerald-900/20'
                           : 'bg-white/70 text-emerald-950 ring-emerald-200/70 hover:bg-emerald-50'
                       )}
                       aria-haspopup="dialog"
@@ -4071,7 +3959,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       {alertsCount > 0 && (
                         <span
                           className={cn(
-                            'px-1.5 py-0.5 rounded-full text-[10px] font-black',
+                            'px-1.5 py-0.5 rounded-full text-[11px] font-semibold',
                             alertsOpen ? 'bg-white/15 text-white' : 'bg-emerald-100 text-emerald-900'
                           )}
                         >
@@ -4086,10 +3974,10 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           <div className="absolute inset-0 bg-black/40" onClick={() => setAlertsOpen(false)} />
                           <div className="absolute inset-0 flex items-end justify-center p-3">
                             <div className="w-full max-w-md rounded-3xl border border-emerald-200 bg-white shadow-2xl overflow-hidden">
-                              <div className="px-4 py-3 border-b bg-gradient-to-br from-emerald-50 via-white to-white flex items-center justify-between gap-2">
+                              <div className="px-4 py-3 border-b bg-white flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2 min-w-0">
                                   <Bell size={18} className="text-emerald-700" />
-                                  <div className="font-black text-emerald-950 text-sm truncate">التنبيهات</div>
+                                  <div className="font-semibold text-emerald-950 text-sm truncate">التنبيهات</div>
                                 </div>
                                 <button
                                   type="button"
@@ -4101,8 +3989,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                 </button>
                               </div>
                               <div className="p-4 space-y-3 max-h-[72vh] overflow-y-auto">
-                                <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-emerald-50/60 p-3 text-[11px] font-extrabold text-emerald-900">
-                                  {helpHints[helpHintIndex] || 'دليل سريع'}
+                                <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-emerald-50/60 p-3 text-[11px] font-semibold text-emerald-900">
+                                  <BookingHelpHint hints={helpHints} />
                                 </div>
                                 {hasQuickGuide && (
                                   <div
@@ -4119,7 +4007,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                               : 'bg-gray-50 border-gray-200 text-gray-900'
                                     )}
                                   >
-                                    <div className="font-black text-sm">{quickGuide.title}</div>
+                                    <div className="font-semibold text-sm">{quickGuide.title}</div>
                                     <div className="mt-1 text-[11px] whitespace-pre-line leading-6">{quickGuide.body}</div>
                                     <div className="mt-3 flex items-center justify-end gap-2">
                                       <button
@@ -4128,7 +4016,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                           setAlertsOpen(false);
                                           setShowHelpModal(true);
                                         }}
-                                        className="px-3 py-2 rounded-2xl bg-white/80 hover:bg-white border text-[11px] font-black"
+                                        className="px-3 py-2 rounded-2xl bg-white/80 hover:bg-white border text-[11px] font-semibold"
                                       >
                                         تفاصيل أكثر
                                       </button>
@@ -4138,8 +4026,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                 {hasEjarBadge && (
                                   <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-white/70 p-3">
                                     <div className="flex items-center justify-between gap-2">
-                                      <div className="text-[11px] font-black text-emerald-950">إيجار</div>
-                                      <span className={cn('px-2 py-1 rounded-full border text-[10px] font-black', ejarUploadStatusMeta?.className)}>
+                                      <div className="text-[11px] font-semibold text-emerald-950">إيجار</div>
+                                      <span className={cn('px-2 py-1 rounded-full border text-[11px] font-semibold', ejarUploadStatusMeta?.className)}>
                                         {ejarUploadStatusMeta?.label}
                                       </span>
                                     </div>
@@ -4149,7 +4037,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                   <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
                                     <div className="flex items-start justify-between gap-2">
                                       <div>
-                                        <div className="text-xs font-black text-amber-900">تنبيه مهم</div>
+                                        <div className="text-xs font-semibold text-amber-900">تنبيه مهم</div>
                                         <div className="mt-1 text-[11px] font-bold text-amber-900 leading-6">
                                           العقد يحتاج إلى توثيق (المرفوع إلى منصة إيجار).
                                         </div>
@@ -4159,7 +4047,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                           type="button"
                                           onClick={markEjarSupervisorNoteDocumented}
                                           disabled={ejarDocBusy}
-                                          className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-black text-gray-800 disabled:opacity-60 shrink-0"
+                                          className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-semibold text-gray-800 disabled:opacity-60 shrink-0"
                                         >
                                           تم توثيق
                                         </button>
@@ -4169,7 +4057,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                 )}
                                 {hasEjarRejection && (
                                   <div className="rounded-2xl border border-red-200 bg-red-50 p-3">
-                                    <div className="text-xs font-black text-red-800 mb-1">ملاحظة الرفض (إيجار)</div>
+                                    <div className="text-xs font-semibold text-red-800 mb-1">ملاحظة الرفض (إيجار)</div>
                                     <div className="text-[11px] font-bold text-red-900 whitespace-pre-wrap">
                                       {String(ejarExistingUpload?.decision_notes || '')}
                                     </div>
@@ -4183,7 +4071,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                     )}
                                   >
                                     <div className="flex items-start justify-between gap-2">
-                                      <div className={cn('text-xs font-black', (ejarApprovalCountdown?.remaining || 0) > 0 ? 'text-emerald-900' : 'text-red-900')}>
+                                      <div className={cn('text-xs font-semibold', (ejarApprovalCountdown?.remaining || 0) > 0 ? 'text-emerald-900' : 'text-red-900')}>
                                         تم تأكيد العقد وبانتظار الموافقة
                                       </div>
                                       {String(ejarExistingUpload?.supervisor_note || '').trim() !== 'تم توثيق' ? (
@@ -4191,12 +4079,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                           type="button"
                                           onClick={markEjarSupervisorNoteDocumented}
                                           disabled={ejarDocBusy}
-                                          className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-black text-gray-800 disabled:opacity-60"
+                                          className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-semibold text-gray-800 disabled:opacity-60"
                                         >
                                           تم توثيق
                                         </button>
                                       ) : (
-                                        <span className="px-3 py-1.5 rounded-lg border bg-white text-[11px] font-black text-emerald-800 border-emerald-200">
+                                        <span className="px-3 py-1.5 rounded-lg border bg-white text-[11px] font-semibold text-emerald-800 border-emerald-200">
                                           موثق
                                         </span>
                                       )}
@@ -4222,7 +4110,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                   <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-white/70 p-3">
                                     <div className="flex items-center gap-2 text-emerald-950">
                                       <Key size={16} className="text-emerald-800" />
-                                      <div className="text-[11px] font-extrabold">يوجد مفاتيح ذكية مصدرة لهذا الحجز</div>
+                                      <div className="text-[11px] font-semibold">يوجد مفاتيح ذكية مصدرة لهذا الحجز</div>
                                     </div>
                                   </div>
                                 )}
@@ -4232,10 +4120,10 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         </div>
 
                         <div className="hidden md:block absolute z-[80] top-10 right-0 w-[380px] max-w-[calc(100vw-24px)] rounded-3xl border border-emerald-200 bg-white shadow-2xl overflow-hidden">
-                          <div className="px-4 py-3 border-b bg-gradient-to-br from-emerald-50 via-white to-white flex items-center justify-between gap-2">
+                          <div className="px-4 py-3 border-b bg-white flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <Bell size={18} className="text-emerald-700" />
-                              <div className="font-black text-emerald-950 text-sm truncate">التنبيهات</div>
+                              <div className="font-semibold text-emerald-950 text-sm truncate">التنبيهات</div>
                             </div>
                             <button
                               type="button"
@@ -4247,8 +4135,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                             </button>
                           </div>
                           <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
-                            <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-emerald-50/60 p-3 text-[11px] font-extrabold text-emerald-900">
-                              {helpHints[helpHintIndex] || 'دليل سريع'}
+                            <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-emerald-50/60 p-3 text-[11px] font-semibold text-emerald-900">
+                              <BookingHelpHint hints={helpHints} />
                             </div>
                             {hasQuickGuide && (
                               <div
@@ -4265,7 +4153,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                           : 'bg-gray-50 border-gray-200 text-gray-900'
                                 )}
                               >
-                                <div className="font-black text-sm">{quickGuide.title}</div>
+                                <div className="font-semibold text-sm">{quickGuide.title}</div>
                                 <div className="mt-1 text-[11px] whitespace-pre-line leading-6">{quickGuide.body}</div>
                                 <div className="mt-3 flex items-center justify-end gap-2">
                                   <button
@@ -4274,7 +4162,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                       setAlertsOpen(false);
                                       setShowHelpModal(true);
                                     }}
-                                    className="px-3 py-2 rounded-2xl bg-white/80 hover:bg-white border text-[11px] font-black"
+                                    className="px-3 py-2 rounded-2xl bg-white/80 hover:bg-white border text-[11px] font-semibold"
                                   >
                                     تفاصيل أكثر
                                   </button>
@@ -4284,8 +4172,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                             {hasEjarBadge && (
                               <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-white/70 p-3">
                                 <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[11px] font-black text-emerald-950">إيجار</div>
-                                  <span className={cn('px-2 py-1 rounded-full border text-[10px] font-black', ejarUploadStatusMeta?.className)}>
+                                  <div className="text-[11px] font-semibold text-emerald-950">إيجار</div>
+                                  <span className={cn('px-2 py-1 rounded-full border text-[11px] font-semibold', ejarUploadStatusMeta?.className)}>
                                     {ejarUploadStatusMeta?.label}
                                   </span>
                                 </div>
@@ -4295,7 +4183,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
-                                    <div className="text-xs font-black text-amber-900">تنبيه مهم</div>
+                                    <div className="text-xs font-semibold text-amber-900">تنبيه مهم</div>
                                     <div className="mt-1 text-[11px] font-bold text-amber-900 leading-6">
                                       العقد يحتاج إلى توثيق (المرفوع إلى منصة إيجار).
                                     </div>
@@ -4305,7 +4193,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                       type="button"
                                       onClick={markEjarSupervisorNoteDocumented}
                                       disabled={ejarDocBusy}
-                                      className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-black text-gray-800 disabled:opacity-60 shrink-0"
+                                      className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-semibold text-gray-800 disabled:opacity-60 shrink-0"
                                     >
                                       تم توثيق
                                     </button>
@@ -4315,7 +4203,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                             )}
                             {hasEjarRejection && (
                               <div className="rounded-2xl border border-red-200 bg-red-50 p-3">
-                                <div className="text-xs font-black text-red-800 mb-1">ملاحظة الرفض (إيجار)</div>
+                                <div className="text-xs font-semibold text-red-800 mb-1">ملاحظة الرفض (إيجار)</div>
                                 <div className="text-[11px] font-bold text-red-900 whitespace-pre-wrap">
                                   {String(ejarExistingUpload?.decision_notes || '')}
                                 </div>
@@ -4329,7 +4217,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                 )}
                               >
                                 <div className="flex items-start justify-between gap-2">
-                                  <div className={cn('text-xs font-black', (ejarApprovalCountdown?.remaining || 0) > 0 ? 'text-emerald-900' : 'text-red-900')}>
+                                  <div className={cn('text-xs font-semibold', (ejarApprovalCountdown?.remaining || 0) > 0 ? 'text-emerald-900' : 'text-red-900')}>
                                     تم تأكيد العقد وبانتظار الموافقة
                                   </div>
                                   {String(ejarExistingUpload?.supervisor_note || '').trim() !== 'تم توثيق' ? (
@@ -4337,12 +4225,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                       type="button"
                                       onClick={markEjarSupervisorNoteDocumented}
                                       disabled={ejarDocBusy}
-                                      className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-black text-gray-800 disabled:opacity-60"
+                                      className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-semibold text-gray-800 disabled:opacity-60"
                                     >
                                       تم توثيق
                                     </button>
                                   ) : (
-                                    <span className="px-3 py-1.5 rounded-lg border bg-white text-[11px] font-black text-emerald-800 border-emerald-200">
+                                    <span className="px-3 py-1.5 rounded-lg border bg-white text-[11px] font-semibold text-emerald-800 border-emerald-200">
                                       موثق
                                     </span>
                                   )}
@@ -4368,7 +4256,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                               <div className="rounded-2xl ring-1 ring-emerald-200/70 bg-white/70 p-3">
                                 <div className="flex items-center gap-2 text-emerald-950">
                                   <Key size={16} className="text-emerald-800" />
-                                  <div className="text-[11px] font-extrabold">يوجد مفاتيح ذكية مصدرة لهذا الحجز</div>
+                                  <div className="text-[11px] font-semibold">يوجد مفاتيح ذكية مصدرة لهذا الحجز</div>
                                 </div>
                               </div>
                             )}
@@ -4385,17 +4273,17 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             </p>
           </div>
         </div>
-        <div className="w-full md:w-auto max-w-full">
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-            <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-white/70 p-2">
-              <div className="px-1 pb-1 text-[11px] font-black text-gray-700">الحجز</div>
+        <div className="w-full min-w-0">
+          <div className={`${styles.toolbar} grid grid-cols-1 gap-3 md:grid-cols-3`}>
+            <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white/70 p-2">
+              <div className="px-1 pb-1 text-[11px] font-semibold text-gray-700">الحجز</div>
               <div className="flex flex-wrap gap-2">
                 {['confirmed', 'checked_in'].includes(booking.status) && (
                   <button
                     onClick={() => router.push(`/bookings-list/${booking.id}/extend`)}
                     id="bd-btn-extend"
                     title="تمديد الحجز: ينشئ فاتورة تمديد ويحدّث تاريخ المغادرة"
-                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-[11px] md:text-sm font-extrabold shadow-sm"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-900 text-white rounded-2xl md:rounded-xl hover:bg-emerald-800 transition-all text-[11px] md:text-sm font-semibold shadow-sm"
                   >
                     <Clock size={18} />
                     <span className="hidden md:inline">تمديد الحجز</span>
@@ -4408,7 +4296,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     onClick={handleCheckIn}
                     disabled={loading}
                     id="bd-btn-checkin"
-                    className="relative flex items-center gap-1.5 px-3 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                    className="relative flex items-center gap-1.5 px-3 py-2 bg-emerald-900 text-white rounded-2xl md:rounded-xl hover:bg-emerald-800 transition-all text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                     title="بعد توقيع محضر الاستلام: اضغط هنا لتسجيل الدخول. هذا يصدر الفاتورة ويرحل القيود لضبط الحسابات"
                   >
                     <LogIn size={18} />
@@ -4416,7 +4304,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <span className="md:hidden">دخول</span>
                     {lateCheckInDays > 0 && (
                       <div className="pointer-events-none absolute -top-10 right-0 flex flex-col items-end animate-pulse">
-                        <div className="bg-red-600 text-white text-[10px] font-black px-2 py-1 rounded-xl shadow-lg whitespace-nowrap">
+                        <div className="bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-xl shadow-lg whitespace-nowrap">
                           تأخر تسجيل الدخول {lateCheckInDays} يوم
                         </div>
                         <div className="mr-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-red-600" />
@@ -4430,7 +4318,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     onClick={handleCheckOut}
                     disabled={loading}
                     id="bd-btn-checkout"
-                    className="relative flex items-center gap-1.5 px-3 py-2 bg-amber-600 text-white rounded-2xl md:rounded-xl hover:bg-amber-700 transition-colors text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                    className="relative flex items-center gap-1.5 px-3 py-2 bg-amber-600 text-white rounded-2xl md:rounded-xl hover:bg-amber-700 transition-colors text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                     title="تسجيل خروج: يعتمد لإخلاء الوحدة ويطلق إجراءات ما بعد الخروج مثل أحداث التنظيف والحسابات"
                   >
                     <LogOut size={18} />
@@ -4438,7 +4326,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <span className="md:hidden">خروج</span>
                     {lateCheckOutDays > 0 && (
                       <div className="pointer-events-none absolute -top-10 right-0 flex flex-col items-end animate-pulse">
-                        <div className="bg-red-600 text-white text-[10px] font-black px-2 py-1 rounded-xl shadow-lg whitespace-nowrap">
+                        <div className="bg-red-600 text-white text-[11px] font-semibold px-2 py-1 rounded-xl shadow-lg whitespace-nowrap">
                           تأخر تسجيل الخروج {lateCheckOutDays} يوم
                         </div>
                         <div className="mr-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-red-600" />
@@ -4453,7 +4341,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     disabled={loading}
                     id="bd-btn-undo-checkout"
                     title="تراجع عن تسجيل الخروج: يعيد الحجز إلى حالة مقيم ويعيد حالة الوحدة إلى مشغولة"
-                    className="flex items-center gap-1.5 px-3 py-2 bg-slate-700 text-white rounded-2xl md:rounded-xl hover:bg-slate-800 transition-colors text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-slate-700 text-white rounded-2xl md:rounded-xl hover:bg-slate-800 transition-colors text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                   >
                     <RefreshCw size={18} />
                     <span className="hidden md:inline">تراجع عن تسجيل الخروج</span>
@@ -4461,13 +4349,27 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   </button>
                 )}
 
-                {isAdmin && ['confirmed', 'pending_deposit', 'checked_in'].includes(booking.status) && (
+                {['preliminary', 'pending', 'pending_deposit', 'deposit_paid'].includes(booking.status) && (
+                  <Link
+                    href={`/bookings?complete_booking=${encodeURIComponent(String(booking.id || ''))}`}
+                    id="bd-btn-complete-booking"
+                    title="إكمال إجراءات الحجز: إنشاء فاتورة + عقد + قيود محاسبية (نفس رقم الحجز)"
+                    className="group flex items-center gap-1.5 px-3.5 py-2.5 bg-gradient-to-l from-emerald-600 via-emerald-700 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-700 hover:via-emerald-800 hover:to-emerald-950 transition-all text-[11px] md:text-sm font-semibold shadow-lg shadow-emerald-900/10 hover:shadow-xl hover:shadow-emerald-900/20 border border-emerald-600"
+                  >
+                    <Zap size={18} className="group-hover:scale-110 transition-transform" />
+                    <span className="hidden md:inline">↗ إكمال إجراءات الحجز</span>
+                    <span className="md:hidden">↗ إكمال</span>
+                    <ArrowRight size={14} className="hidden md:inline group-hover:translate-x-0.5 transition-transform" />
+                  </Link>
+                )}
+
+                {isAdmin && ['confirmed', 'pending_deposit', 'checked_in', 'preliminary', 'pending', 'deposit_paid'].includes(booking.status) && (
                   <button
                     onClick={() => setShowCancelModal(true)}
                     disabled={loading}
                     id="bd-btn-cancel-booking"
                     title="إلغاء الحجز: يقوم بأرشفة/عكس الآثار المحاسبية حسب الحالة (للأدمن فقط)"
-                    className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-2xl md:rounded-xl hover:bg-red-700 transition-colors text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-2xl md:rounded-xl hover:bg-red-700 transition-colors text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                   >
                     {loading ? <Loader2 className="animate-spin" size={18} /> : <Ban size={18} />}
                     <span className="hidden md:inline">إلغاء الحجز</span>
@@ -4489,8 +4391,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
             </div>
 
-            <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-white/70 p-2">
-              <div className="px-1 pb-1 text-[11px] font-black text-gray-700">المالية</div>
+            <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white/70 p-2">
+              <div className="px-1 pb-1 text-[11px] font-semibold text-gray-700">المالية</div>
               <div className="flex flex-wrap gap-2">
                 {invoices.length > 0 ? (
                   <>
@@ -4498,7 +4400,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       <button
                         onClick={() => handlePostInvoice(invoices.find(inv => inv.status === 'draft'))}
                         disabled={isIssuing}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-900 text-white rounded-2xl md:rounded-xl hover:bg-emerald-800 transition-all text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                         title={booking.status === 'checked_in' ? 'ترحيل الفاتورة كمديونية على العميل' : 'ترحيل الفاتورة'}
                       >
                         {isIssuing ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
@@ -4517,7 +4419,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           }
                         }}
                         disabled={loading}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-900 text-white rounded-2xl md:rounded-xl hover:bg-emerald-800 transition-all text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                       >
                         <CreditCard size={18} />
                         <span className="hidden md:inline">سداد الفاتورة</span>
@@ -4528,7 +4430,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       <button
                         onClick={handleIssueInvoice}
                         disabled={isIssuing}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 text-white rounded-2xl md:rounded-xl hover:bg-amber-700 transition-colors text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 text-white rounded-2xl md:rounded-xl hover:bg-amber-700 transition-colors text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                         title="استخدام هذا الزر فقط في حال عدم ظهور المديونية في سجل الحركات المالية بالأسفل"
                       >
                         {isIssuing ? <Loader2 className="animate-spin" size={18} /> : <RefreshCw size={18} />}
@@ -4543,7 +4445,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       <button
                         onClick={handleIssueInvoice}
                         disabled={isIssuing}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-900 text-white rounded-2xl md:rounded-xl hover:bg-emerald-800 transition-all text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-50"
                         title={booking.status === 'checked_in' ? 'إصدار وترحيل الفاتورة كمديونية' : 'إصدار الفاتورة'}
                       >
                         {isIssuing ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
@@ -4557,7 +4459,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <button
                   onClick={() => setShowInsuranceVoucher(true)}
                   id="bd-btn-insurance"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 rounded-2xl md:rounded-xl hover:from-emerald-100 transition-all text-emerald-950 font-extrabold text-[11px] md:text-sm shadow-sm"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 rounded-2xl md:rounded-xl hover:from-emerald-100 transition-all text-emerald-950 font-semibold text-[11px] md:text-sm shadow-sm"
                   title="سند التأمين (منفصل عن الفواتير)"
                 >
                   <Banknote size={18} />
@@ -4567,8 +4469,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
             </div>
 
-            <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-white/70 p-2">
-              <div className="px-1 pb-1 text-[11px] font-black text-gray-700">المستندات</div>
+            <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white/70 p-2">
+              <div className="px-1 pb-1 text-[11px] font-semibold text-gray-700">المستندات</div>
               <div className="flex flex-wrap gap-2">
                 {['confirmed', 'checked_in'].includes(booking.status) && (
                   <button
@@ -4576,7 +4478,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     onClick={handleUploadContractToEjar}
                     title="رفع العقد إلى منصة إيجار: يحفظ بيانات الرفع في قاعدة البيانات"
                     disabled={ejarUploadBusy || (Boolean(ejarExistingUpload) && String(ejarExistingUpload?.status || '') === 'confirmed')}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white rounded-2xl md:rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-60"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-900 text-white rounded-2xl md:rounded-xl hover:bg-emerald-800 transition-all text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-60"
                   >
                     {ejarUploadBusy ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
                     <span className="hidden md:inline">
@@ -4592,7 +4494,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     onClick={deleteEjarUploadForBooking}
                     disabled={ejarDeleteBusy || !ejarExistingUpload?.id}
                     title={ejarExistingUpload?.id ? 'حذف رفع إيجار لهذا الحجز' : 'لا يوجد رفع إيجار لهذا الحجز'}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-amber-700 text-white rounded-2xl md:rounded-xl hover:bg-amber-800 transition-colors text-[11px] md:text-sm font-extrabold shadow-sm disabled:opacity-60"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-amber-700 text-white rounded-2xl md:rounded-xl hover:bg-amber-800 transition-colors text-[11px] md:text-sm font-semibold shadow-sm disabled:opacity-60"
                   >
                     {ejarDeleteBusy ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={18} />}
                     <span className="hidden md:inline">حذف رفع إيجار</span>
@@ -4617,7 +4519,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       if (!nextOpen) setPrintMenuPos(null);
                       setPrintMenuOpen(nextOpen);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 rounded-2xl md:rounded-xl hover:from-emerald-100 transition-all text-emerald-950 font-extrabold text-[11px] md:text-sm shadow-sm"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-50 via-white to-white ring-1 ring-emerald-200/70 rounded-2xl md:rounded-xl hover:from-emerald-100 transition-all text-emerald-950 font-semibold text-[11px] md:text-sm shadow-sm"
                   >
                     <Printer size={18} />
                     <span>طباعة</span>
@@ -4638,28 +4540,28 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       >
                         <button
                           type="button"
-                          className="w-full text-right px-4 py-3 text-sm font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100"
+                          className="w-full text-right px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 active:bg-gray-100"
                           onClick={() => openPrintPreview('طباعة العقد', `/print/contract/${booking.id}?embed=1`)}
                         >
                           طباعة العقد
                         </button>
                         <button
                           type="button"
-                          className="w-full text-right px-4 py-3 text-sm font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100 border-t"
+                          className="w-full text-right px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 active:bg-gray-100 border-t"
                           onClick={() => openPrintPreview(invoices.length > 0 ? 'طباعة الفاتورة الأساسية' : 'معاينة الفاتورة', `${invoices.length > 0 ? `/print/invoice/${invoices[0].id}` : `/print/invoice/${booking.id}`}?embed=1`)}
                         >
                           {invoices.length > 0 ? 'طباعة الفاتورة الأساسية' : 'معاينة الفاتورة'}
                         </button>
                         <button
                           type="button"
-                          className="w-full text-right px-4 py-3 text-sm font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100 border-t"
+                          className="w-full text-right px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 active:bg-gray-100 border-t"
                           onClick={() => openPrintPreview('محضر استلام', `/print/handover/${booking.id}?embed=1`)}
                         >
                           محضر استلام
                         </button>
                         <button
                           type="button"
-                          className="w-full text-right px-4 py-3 text-sm font-black text-gray-900 hover:bg-gray-50 active:bg-gray-100 border-t"
+                          className="w-full text-right px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 active:bg-gray-100 border-t"
                           onClick={() => openPrintPreview('محضر تسليم', `/print/return/${booking.id}?embed=1`)}
                         >
                           محضر تسليم
@@ -5100,7 +5002,28 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
     
 
-    {showCancelModal && (
+    {showCancelModal && (() => {
+              const sumTxnPaid = (() => {
+                try {
+                  let sum = 0;
+                  for (const t of transactions) {
+                    const tt = String(t?.transaction_type || '').toLowerCase();
+                    const amt = Number(t?.amount || 0);
+                    if (tt === 'advance_payment' || tt === 'deposit_received' || tt === 'payment_received' || tt === 'cash_receipt' || tt === 'receipt') {
+                      sum += amt;
+                    }
+                  }
+                  for (const p of directPayments) {
+                    sum += Number(p?.amount || 0);
+                  }
+                  return Math.max(0, Math.round(sum));
+                } catch {
+                  return 0;
+                }
+              })();
+              const isPreliminaryChain = ['preliminary', 'pending', 'pending_deposit', 'deposit_paid'].includes(String(booking.status || ''));
+              const needsRefund = sumTxnPaid > 0;
+              return (
       <div className="fixed inset-0 z-50">
         <div className="absolute inset-0 bg-black/40" onClick={() => setShowCancelModal(false)} />
         <div className="absolute inset-0 flex items-center justify-center p-4">
@@ -5120,6 +5043,26 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </button>
             </div>
             <div className="p-4 space-y-3 text-right">
+              {needsRefund && (
+                <div className="rounded-2xl border-2 border-dashed border-orange-300 bg-gradient-to-l from-orange-50 via-orange-50/70 to-amber-50 p-3 shadow-sm">
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5 bg-orange-100 p-1.5 rounded-xl ring-1 ring-orange-200">
+                      <Undo2 size={18} className="text-orange-700" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-orange-900 whitespace-nowrap">
+                        ⚠ إعادة عربون مطلوبة · Refund Required
+                      </div>
+                      <div className="text-[11px] font-bold text-orange-800 mt-1">
+                        تم تسجيل مدفوعات لهذا الحجز بقيمة: <span className="text-base font-semibold text-orange-950 tracking-tight">{sumTxnPaid.toLocaleString()} ر.س</span>
+                      </div>
+                      <div className="text-[11px] text-orange-700 mt-1 leading-relaxed">
+                        {isPreliminaryChain ? 'بعد الإلغاء، قم بإصدار سند إرجاع (Deposit Refund) يعكس المعاملة المالية ويُعاد المبلغ للعميل.' : 'بعد الإلغاء، قم بمراجعة السندات المستحقة الإرجاع للعميل حسب السياسة.'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <p className="text-sm text-gray-800 font-semibold">هل أنت متأكد من إلغاء الحجز؟</p>
               <div className="text-xs text-gray-700 space-y-1">
                 <p>سيؤثر الإلغاء على العناصر التالية:</p>
@@ -5151,7 +5094,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           </div>
         </div>
       </div>
-    )}
+    )})()}
     {showTerminateContractModal && (() => {
       const terminateFinancials = terminateTargetInvoiceId ? getInvoiceFinancials(terminateTargetInvoiceId) : { paid: 0, remaining: 0, status: 'draft' };
       const overpaymentPreview = Math.max(0, Number(terminateFinancials.paid || 0) - Number(terminateTotal || 0));
@@ -5169,7 +5112,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b bg-white flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="font-black text-gray-900 text-sm truncate">فسخ العقد عبر تعديل الفاتورة والقيد مباشرة</div>
+                <div className="font-semibold text-gray-900 text-sm truncate">فسخ العقد عبر تعديل الفاتورة والقيد مباشرة</div>
                 <div className="text-[11px] text-gray-600 truncate">
                   {booking.unit?.unit_number ? `الوحدة: ${booking.unit.unit_number}` : ''} {booking.customer?.full_name ? `• ${booking.customer.full_name}` : ''}
                 </div>
@@ -5201,7 +5144,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       if (item.step === 3 && !canAdvanceFromStep2) return;
                       setTerminateStep(item.step);
                     }}
-                    className={`rounded-2xl px-3 py-2 text-xs font-black transition-colors ${
+                    className={`rounded-2xl px-3 py-2 text-xs font-semibold transition-colors ${
                       terminateStep === item.step
                         ? 'bg-emerald-600 text-white'
                         : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
@@ -5213,7 +5156,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
 
               <div className="bg-white border border-gray-200 rounded-2xl p-3 text-[11px] text-gray-800">
-                <div className="font-black text-gray-900 mb-1">منطق الفسخ الجديد</div>
+                <div className="font-semibold text-gray-900 mb-1">منطق الفسخ الجديد</div>
                 <div className="space-y-1 leading-6">
                   <div>1) يتم اختيار تاريخ الفسخ أولاً لتحديد الفاتورة المستهدفة المرتبطة بهذا التاريخ.</div>
                   <div>2) يتم تعديل نفس الفاتورة ونفس القيد المحاسبي المباشر لها بدون إنشاء قيد تسوية جديد.</div>
@@ -5226,7 +5169,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
                     <div>
-                      <div className="text-xs font-black text-gray-900">1. هل تريد الفسخ اليوم أم بتاريخ آخر؟</div>
+                      <div className="text-xs font-semibold text-gray-900">1. هل تريد الفسخ اليوم أم بتاريخ آخر؟</div>
                       <div className="text-[11px] text-gray-500 mt-1">اختيار هذا التاريخ يحدد الفاتورة التي سيتم تعديلها تلقائياً.</div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -5238,13 +5181,13 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           hydrateTerminateForm(nextDate, nextDate);
                         }}
                         disabled={terminateBusy}
-                        className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 font-black text-xs hover:bg-emerald-100 disabled:opacity-50"
+                        className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 font-semibold text-xs hover:bg-emerald-100 disabled:opacity-50"
                       >
                         فسخ اليوم
                       </button>
                     </div>
                     <div>
-                      <div className="text-[11px] font-black text-gray-700 mb-1">اختر تاريخ الفسخ</div>
+                      <div className="text-[11px] font-semibold text-gray-700 mb-1">اختر تاريخ الفسخ</div>
                       <input
                         type="date"
                         value={terminateEffectiveDate}
@@ -5263,26 +5206,26 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
                   <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
                     <div>
-                      <div className="text-xs font-black text-gray-900">الفاتورة المستهدفة</div>
+                      <div className="text-xs font-semibold text-gray-900">الفاتورة المستهدفة</div>
                       <div className="text-[11px] text-gray-500 mt-1">هذه هي الفاتورة التي ستُعدل بناءً على تاريخ الفسخ المختار.</div>
                     </div>
                     {terminateTargetInvoiceId ? (
                       <div className="space-y-2 text-[12px]">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-gray-500 font-bold">النوع</span>
-                          <span className="font-black text-gray-900">{targetKindLabel}</span>
+                          <span className="font-semibold text-gray-900">{targetKindLabel}</span>
                         </div>
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-gray-500 font-bold">رقم الفاتورة</span>
-                          <span className="font-black text-gray-900">{terminateTargetInvoiceNumber || '-'}</span>
+                          <span className="font-semibold text-gray-900">{terminateTargetInvoiceNumber || '-'}</span>
                         </div>
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-gray-500 font-bold">بداية الفترة</span>
-                          <span className="font-black text-gray-900">{terminateTargetPeriodStart || '-'}</span>
+                          <span className="font-semibold text-gray-900">{terminateTargetPeriodStart || '-'}</span>
                         </div>
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-gray-500 font-bold">نهاية الفترة الحالية</span>
-                          <span className="font-black text-gray-900">{terminateTargetPeriodEnd || '-'}</span>
+                          <span className="font-semibold text-gray-900">{terminateTargetPeriodEnd || '-'}</span>
                         </div>
                       </div>
                     ) : (
@@ -5298,29 +5241,29 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <div className="lg:col-span-1 bg-white border border-gray-200 rounded-2xl p-4 space-y-2 text-[12px]">
-                      <div className="text-xs font-black text-gray-900">2. الفاتورة التي ستتعدل</div>
+                      <div className="text-xs font-semibold text-gray-900">2. الفاتورة التي ستتعدل</div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-gray-500 font-bold">النوع</span>
-                        <span className="font-black text-gray-900">{targetKindLabel}</span>
+                        <span className="font-semibold text-gray-900">{targetKindLabel}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-gray-500 font-bold">رقم الفاتورة</span>
-                        <span className="font-black text-gray-900">{terminateTargetInvoiceNumber || '-'}</span>
+                        <span className="font-semibold text-gray-900">{terminateTargetInvoiceNumber || '-'}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-gray-500 font-bold">بداية الفترة</span>
-                        <span className="font-black text-gray-900">{terminateTargetPeriodStart || '-'}</span>
+                        <span className="font-semibold text-gray-900">{terminateTargetPeriodStart || '-'}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-gray-500 font-bold">نهاية الفترة الحالية</span>
-                        <span className="font-black text-gray-900">{terminateTargetPeriodEnd || '-'}</span>
+                        <span className="font-semibold text-gray-900">{terminateTargetPeriodEnd || '-'}</span>
                       </div>
                     </div>
 
                     <div className="lg:col-span-2 bg-white border border-gray-200 rounded-2xl p-4 space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
-                          <div className="text-[11px] font-black text-gray-700 mb-1">نهاية الفترة بعد الفسخ</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">نهاية الفترة بعد الفسخ</div>
                           <input
                             type="date"
                             value={terminateNewPeriodEnd}
@@ -5335,7 +5278,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           />
                         </div>
                         <div>
-                          <div className="text-[11px] font-black text-gray-700 mb-1">تاريخ الفاتورة</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">تاريخ الفاتورة</div>
                           <input
                             type="date"
                             value={terminateInvoiceDate}
@@ -5345,7 +5288,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           />
                         </div>
                         <div>
-                          <div className="text-[11px] font-black text-gray-700 mb-1">تاريخ القيد</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">تاريخ القيد</div>
                           <input
                             type="date"
                             value={terminateJournalDate}
@@ -5358,7 +5301,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                         <div>
-                          <div className="text-[11px] font-black text-gray-700 mb-1">قيمة الفترة قبل الخصم</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">قيمة الفترة قبل الخصم</div>
                           <input
                             type="number"
                             inputMode="decimal"
@@ -5370,7 +5313,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           />
                         </div>
                         <div>
-                          <div className="text-[11px] font-black text-gray-700 mb-1">الخصم</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">الخصم</div>
                           <input
                             type="number"
                             inputMode="decimal"
@@ -5382,7 +5325,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           />
                         </div>
                         <div>
-                          <div className="text-[11px] font-black text-gray-700 mb-1">الخدمات الإضافية</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">الخدمات الإضافية</div>
                           <input
                             type="number"
                             inputMode="decimal"
@@ -5394,7 +5337,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           />
                         </div>
                         <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2">
-                          <div className="text-[11px] font-black text-gray-700 mb-1">الضريبة</div>
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1">الضريبة</div>
                           <label className="flex items-center justify-between gap-2 text-[11px] font-bold text-gray-700">
                             <span>{terminateApplyTax ? 'مفعلة' : 'غير مفعلة'}</span>
                             <input
@@ -5404,16 +5347,16 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                               disabled={terminateBusy}
                             />
                           </label>
-                          <div className="mt-2 text-sm font-black text-gray-900">{Number(terminateTaxAmount || 0).toFixed(2)}</div>
+                          <div className="mt-2 text-sm font-semibold text-gray-900">{Number(terminateTaxAmount || 0).toFixed(2)}</div>
                         </div>
                       </div>
 
                       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-emerald-900 font-black">الإجمالي الجديد للفاتورة</div>
+                          <div className="text-emerald-900 font-semibold">الإجمالي الجديد للفاتورة</div>
                           <div className="text-emerald-700 text-[11px]">سيتم تعديل نفس القيد المحاسبي بهذه القيمة.</div>
                         </div>
-                        <div className="text-lg font-black text-emerald-950">{Number(terminateTotal || 0).toFixed(2)}</div>
+                        <div className="text-lg font-semibold text-emerald-950">{Number(terminateTotal || 0).toFixed(2)}</div>
                       </div>
                     </div>
                   </div>
@@ -5423,40 +5366,40 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               {terminateStep === 3 && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-2 text-[12px]">
-                    <div className="text-xs font-black text-gray-900">3. مراجعة ما سيحدث</div>
+                    <div className="text-xs font-semibold text-gray-900">3. مراجعة ما سيحدث</div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">تاريخ الفسخ</span>
-                      <span className="font-black text-gray-900">{terminateEffectiveDate || '-'}</span>
+                      <span className="font-semibold text-gray-900">{terminateEffectiveDate || '-'}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">الفاتورة المستهدفة</span>
-                      <span className="font-black text-gray-900">{terminateTargetInvoiceNumber || '-'}</span>
+                      <span className="font-semibold text-gray-900">{terminateTargetInvoiceNumber || '-'}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">نوعها</span>
-                      <span className="font-black text-gray-900">{targetKindLabel}</span>
+                      <span className="font-semibold text-gray-900">{targetKindLabel}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">نهاية الفترة الجديدة</span>
-                      <span className="font-black text-gray-900">{terminateNewPeriodEnd || '-'}</span>
+                      <span className="font-semibold text-gray-900">{terminateNewPeriodEnd || '-'}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">إجمالي الفاتورة بعد الفسخ</span>
-                      <span className="font-black text-gray-900">{Number(terminateTotal || 0).toFixed(2)}</span>
+                      <span className="font-semibold text-gray-900">{Number(terminateTotal || 0).toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">المسدد الحالي على الفاتورة</span>
-                      <span className="font-black text-gray-900">{Number(terminateFinancials.paid || 0).toFixed(2)}</span>
+                      <span className="font-semibold text-gray-900">{Number(terminateFinancials.paid || 0).toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-gray-500 font-bold">فرق السداد الزائد المتوقع</span>
-                      <span className={`font-black ${overpaymentPreview > 0 ? 'text-amber-700' : 'text-gray-900'}`}>{overpaymentPreview.toFixed(2)}</span>
+                      <span className={`font-semibold ${overpaymentPreview > 0 ? 'text-amber-700' : 'text-gray-900'}`}>{overpaymentPreview.toFixed(2)}</span>
                     </div>
                   </div>
 
                   <div className="space-y-3">
                     <div className="bg-white border border-gray-200 rounded-2xl p-4 text-[11px] text-gray-800">
-                      <div className="font-black text-gray-900 mb-2">الترتيب المحاسبي للتنفيذ</div>
+                      <div className="font-semibold text-gray-900 mb-2">الترتيب المحاسبي للتنفيذ</div>
                       <div className="space-y-1 leading-6">
                         <div>1) تعديل القيد الأصلي الخاص بنفس الفاتورة.</div>
                         <div>2) تعديل الفاتورة نفسها بالقيم الجديدة.</div>
@@ -5489,7 +5432,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   type="button"
                   onClick={() => setShowTerminateContractModal(false)}
                   disabled={terminateBusy}
-                  className="px-4 py-2 rounded-2xl bg-white border border-gray-200 text-gray-800 font-black text-sm hover:bg-gray-50 disabled:opacity-50"
+                  className="px-4 py-2 rounded-2xl bg-white border border-gray-200 text-gray-800 font-semibold text-sm hover:bg-gray-50 disabled:opacity-50"
                 >
                   إلغاء
                 </button>
@@ -5499,7 +5442,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       type="button"
                       onClick={() => setTerminateStep((prev) => (prev === 3 ? 2 : 1))}
                       disabled={terminateBusy}
-                      className="px-4 py-2 rounded-2xl bg-white border border-gray-200 text-gray-800 font-black text-sm hover:bg-gray-50 disabled:opacity-50"
+                      className="px-4 py-2 rounded-2xl bg-white border border-gray-200 text-gray-800 font-semibold text-sm hover:bg-gray-50 disabled:opacity-50"
                     >
                       السابق
                     </button>
@@ -5524,7 +5467,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         setTerminateStep(3);
                       }}
                       disabled={terminateBusy}
-                      className="px-4 py-2 rounded-2xl bg-emerald-600 text-white font-black text-sm hover:bg-emerald-700 disabled:opacity-50"
+                      className="px-4 py-2 rounded-2xl bg-emerald-600 text-white font-semibold text-sm hover:bg-emerald-700 disabled:opacity-50"
                     >
                       التالي
                     </button>
@@ -5535,7 +5478,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       type="button"
                       onClick={handleTerminateContract}
                       disabled={terminateBusy || !canAdvanceFromStep2}
-                      className="px-4 py-2 rounded-2xl bg-red-600 text-white font-black text-sm hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                      className="px-4 py-2 rounded-2xl bg-red-600 text-white font-semibold text-sm hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
                     >
                       {terminateBusy ? <Loader2 className="animate-spin" size={16} /> : null}
                       تنفيذ الفسخ
@@ -5549,13 +5492,13 @@ if (activeInvoice && activeInvoice.status === 'draft') {
       );
     })()}
       <div className="mt-4 sm:mt-6">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <div role="group" aria-label="أقسام بيانات الحجز" className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-stone-200 bg-stone-100/60 p-1.5">
           <button
             type="button"
             onClick={() => setActiveTab('summary')}
             className={cn(
-              'shrink-0 px-3 py-2 rounded-2xl text-[11px] sm:text-sm font-black ring-1 transition-colors',
-              activeTab === 'summary' ? 'bg-emerald-700 text-white ring-emerald-700' : 'bg-white/70 text-emerald-950 ring-emerald-200/70 hover:bg-emerald-50'
+              'min-h-11 flex-1 sm:flex-none shrink-0 px-4 py-2 rounded-xl text-xs font-semibold ring-1 transition-colors',
+              activeTab === 'summary' ? 'bg-white text-emerald-950 ring-stone-200 shadow-sm' : 'bg-transparent text-stone-500 ring-transparent hover:bg-white/70'
             )}
           >
             ملخص
@@ -5564,8 +5507,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             type="button"
             onClick={() => setActiveTab('files')}
             className={cn(
-              'shrink-0 px-3 py-2 rounded-2xl text-[11px] sm:text-sm font-black ring-1 transition-colors',
-              activeTab === 'files' ? 'bg-emerald-700 text-white ring-emerald-700' : 'bg-white/70 text-emerald-950 ring-emerald-200/70 hover:bg-emerald-50'
+              'min-h-11 flex-1 sm:flex-none shrink-0 px-4 py-2 rounded-xl text-xs font-semibold ring-1 transition-colors',
+              activeTab === 'files' ? 'bg-white text-emerald-950 ring-stone-200 shadow-sm' : 'bg-transparent text-stone-500 ring-transparent hover:bg-white/70'
             )}
           >
             الملفات والإيصالات
@@ -5575,8 +5518,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               type="button"
               onClick={() => setActiveTab('system')}
               className={cn(
-                'shrink-0 px-3 py-2 rounded-2xl text-[11px] sm:text-sm font-black ring-1 transition-colors',
-                activeTab === 'system' ? 'bg-emerald-700 text-white ring-emerald-700' : 'bg-white/70 text-emerald-950 ring-emerald-200/70 hover:bg-emerald-50'
+                'min-h-11 flex-1 sm:flex-none shrink-0 px-4 py-2 rounded-xl text-xs font-semibold ring-1 transition-colors',
+                activeTab === 'system' ? 'bg-white text-emerald-950 ring-stone-200 shadow-sm' : 'bg-transparent text-stone-500 ring-transparent hover:bg-white/70'
               )}
             >
               سجل النظام
@@ -5593,9 +5536,9 @@ if (activeInvoice && activeInvoice.status === 'draft') {
       >
         <div className={cn('space-y-4 lg:space-y-6', activeTab === 'summary' ? 'lg:col-span-2' : '')}>
           {activeTab === 'files' && (
-            <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 shadow-sm">
+            <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-6 shadow-sm">
               <div className="flex items-center justify-between gap-2 mb-3">
-                <h2 className="text-base sm:text-lg font-extrabold text-emerald-950 flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-semibold text-emerald-950 flex items-center gap-2">
                   <FileText className="text-emerald-700" size={20} />
                   الملفات والإيصالات
                 </h2>
@@ -5606,17 +5549,17 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     loadDocuments();
                   }}
                   disabled={documentsLoading}
-                  className="px-3 py-1.5 rounded-xl bg-white/70 ring-1 ring-emerald-200/70 hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs transition-colors disabled:opacity-60 flex items-center gap-2"
+                  className="px-3 py-1.5 rounded-xl bg-white/70 ring-1 ring-emerald-200/70 hover:bg-emerald-50 text-emerald-950 font-semibold text-xs transition-colors disabled:opacity-60 flex items-center gap-2"
                 >
                   {documentsLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
                   تحديث
                 </button>
               </div>
 
-              <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-white/80 p-3 sm:p-4">
+              <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white/80 p-3 sm:p-4">
                 <div className="flex flex-col gap-3">
                   <div>
-                    <div className="text-xs font-black text-gray-700 mb-2">نوع الملف</div>
+                    <div className="text-xs font-semibold text-gray-700 mb-2">نوع الملف</div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {[
                         { id: 'receipt', label: 'إيصال' },
@@ -5629,7 +5572,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           type="button"
                           onClick={() => setUploadDocType(option.id as typeof uploadDocType)}
                           className={cn(
-                            'px-3 py-2 rounded-2xl text-sm font-black ring-1 transition-colors',
+                            'px-3 py-2 rounded-2xl text-sm font-semibold ring-1 transition-colors',
                             uploadDocType === option.id
                               ? 'bg-emerald-700 text-white ring-emerald-700'
                               : 'bg-white text-emerald-950 ring-emerald-200/70 hover:bg-emerald-50'
@@ -5647,12 +5590,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       className="min-h-[52px] rounded-2xl border-2 border-dashed border-emerald-200 bg-emerald-50/60 px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:bg-emerald-50 transition-colors"
                     >
                       <div className="min-w-0">
-                        <div className="text-xs font-black text-emerald-950">اختر ملفاً للرفع</div>
+                        <div className="text-xs font-semibold text-emerald-950">اختر ملفاً للرفع</div>
                         <div className="text-[11px] font-bold text-gray-500 truncate">
                           {uploadFile ? uploadFile.name : 'PDF أو صورة'}
                         </div>
                       </div>
-                      <span className="px-3 py-1.5 rounded-xl bg-white ring-1 ring-emerald-200/70 text-emerald-950 text-xs font-extrabold shrink-0">
+                      <span className="px-3 py-1.5 rounded-xl bg-white ring-1 ring-emerald-200/70 text-emerald-950 text-xs font-semibold shrink-0">
                         استعراض
                       </span>
                     </label>
@@ -5667,7 +5610,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       type="button"
                       onClick={handleUploadDocument}
                       disabled={uploadBusy || !uploadFile}
-                      className="min-h-[52px] px-4 py-2 rounded-2xl bg-emerald-700 text-white font-extrabold text-sm hover:bg-emerald-800 disabled:opacity-60 flex items-center justify-center gap-2"
+                      className="min-h-[52px] px-4 py-2 rounded-2xl bg-emerald-700 text-white font-semibold text-sm hover:bg-emerald-800 disabled:opacity-60 flex items-center justify-center gap-2"
                     >
                       {uploadBusy ? <Loader2 className="animate-spin" size={16} /> : null}
                       رفع الملف
@@ -5702,7 +5645,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               )}
 
               {!documentsError && !documentsLoading && (documents || []).length === 0 && (
-                <div className="mt-3 text-center py-8 text-emerald-900 bg-white/60 rounded-2xl ring-1 ring-emerald-100/70 font-bold text-sm">
+                <div className="mt-3 text-center py-8 text-emerald-900 bg-white/60 rounded-2xl ring-1 ring-stone-200/80 font-bold text-sm">
                   لا توجد ملفات مرفوعة
                 </div>
               )}
@@ -5722,12 +5665,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="px-2 py-1 rounded-full bg-emerald-700 text-white text-[10px] font-black">
+                              <span className="px-2 py-1 rounded-full bg-emerald-700 text-white text-[11px] font-semibold">
                                 {docTypeLabel(displayType)}
                               </span>
-                              <span className="text-[10px] font-bold text-gray-500">{dateText}</span>
+                              <span className="text-[11px] font-bold text-gray-500">{dateText}</span>
                             </div>
-                            <div className="mt-2 text-xs font-black text-gray-900 truncate dir-ltr">
+                            <div className="mt-2 text-xs font-semibold text-gray-900 truncate dir-ltr">
                               {fileName}
                             </div>
                           </div>
@@ -5736,12 +5679,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           </div>
                         </div>
 
-                        <div className="mt-3 h-20 rounded-2xl bg-white/80 ring-1 ring-emerald-100/70 flex items-center justify-center text-center px-3">
+                        <div className="mt-3 h-20 rounded-2xl bg-white/80 ring-1 ring-stone-200/80 flex items-center justify-center text-center px-3">
                           <div>
-                            <div className="text-[11px] font-black text-emerald-950">
+                            <div className="text-[11px] font-semibold text-emerald-950">
                               {isPdf ? 'ملف PDF' : 'صورة مرفوعة'}
                             </div>
-                            <div className="text-[10px] font-bold text-gray-500 mt-1">
+                            <div className="text-[11px] font-bold text-gray-500 mt-1">
                               {docTypeLabel(displayType)}
                             </div>
                           </div>
@@ -5753,12 +5696,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                               href={d.public_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="flex-1 px-3 py-2 rounded-2xl bg-white ring-1 ring-emerald-200/70 hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs text-center transition-colors"
+                              className="flex-1 px-3 py-2 rounded-2xl bg-white ring-1 ring-emerald-200/70 hover:bg-emerald-50 text-emerald-950 font-semibold text-xs text-center transition-colors"
                             >
                               فتح الملف
                             </a>
                           ) : (
-                            <div className="flex-1 px-3 py-2 rounded-2xl bg-gray-50 ring-1 ring-gray-200 text-gray-400 font-extrabold text-xs text-center">
+                            <div className="flex-1 px-3 py-2 rounded-2xl bg-gray-50 ring-1 ring-gray-200 text-gray-400 font-semibold text-xs text-center">
                               لا يوجد رابط
                             </div>
                           )}
@@ -5767,7 +5710,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                               type="button"
                               onClick={() => handleDeleteDocument(d.id)}
                               disabled={documentsLoading}
-                              className="px-3 py-2 rounded-2xl bg-red-50 ring-1 ring-red-200 hover:bg-red-100 text-red-800 font-extrabold text-xs transition-colors disabled:opacity-60"
+                              className="px-3 py-2 rounded-2xl bg-red-50 ring-1 ring-red-200 hover:bg-red-100 text-red-800 font-semibold text-xs transition-colors disabled:opacity-60"
                             >
                               حذف
                             </button>
@@ -5782,9 +5725,9 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           )}
 
           {isAdmin && activeTab === 'system' && (
-            <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 shadow-sm">
+            <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-6 shadow-sm">
               <div className="flex items-center justify-between gap-2 mb-3">
-                <h2 className="text-base sm:text-lg font-extrabold text-emerald-950 flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-semibold text-emerald-950 flex items-center gap-2">
                   <History className="text-emerald-700" size={20} />
                   سجل النظام
                 </h2>
@@ -5795,7 +5738,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     loadSystemEvents();
                   }}
                   disabled={systemEventsLoading}
-                  className="px-3 py-1.5 rounded-xl bg-white/70 ring-1 ring-emerald-200/70 hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs transition-colors disabled:opacity-60 flex items-center gap-2"
+                  className="px-3 py-1.5 rounded-xl bg-white/70 ring-1 ring-emerald-200/70 hover:bg-emerald-50 text-emerald-950 font-semibold text-xs transition-colors disabled:opacity-60 flex items-center gap-2"
                 >
                   {systemEventsLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
                   تحديث
@@ -5816,7 +5759,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     type="button"
                     onClick={() => setSystemEventsFilter(f.id)}
                     className={cn(
-                      'px-3 py-1.5 rounded-2xl text-[11px] font-black ring-1 transition-colors',
+                      'px-3 py-1.5 rounded-2xl text-[11px] font-semibold ring-1 transition-colors',
                       systemEventsFilter === f.id ? 'bg-emerald-700 text-white ring-emerald-700' : 'bg-white/70 text-emerald-950 ring-emerald-200/70 hover:bg-emerald-50'
                     )}
                   >
@@ -5838,7 +5781,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               )}
 
               {!systemEventsError && !systemEventsLoading && visibleSystemEvents.length === 0 && (
-                <div className="text-center py-8 text-emerald-900 bg-white/60 rounded-2xl ring-1 ring-emerald-100/70 font-bold text-sm">
+                <div className="text-center py-8 text-emerald-900 bg-white/60 rounded-2xl ring-1 ring-stone-200/80 font-bold text-sm">
                   لا توجد أحداث
                 </div>
               )}
@@ -5849,19 +5792,19 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     const createdAt = ev?.created_at ? new Date(ev.created_at) : null;
                     const actorEmail = ev?.payload?.actor_email || null;
                     return (
-                      <div key={ev.id} className="rounded-2xl ring-1 ring-emerald-100/70 bg-white/70 p-3">
+                      <div key={ev.id} className="rounded-2xl ring-1 ring-stone-200/80 bg-white/70 p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="text-[11px] font-black text-emerald-950 truncate">{ev.message}</div>
-                          <div className="text-[10px] font-bold text-gray-600 shrink-0">
+                          <div className="text-[11px] font-semibold text-emerald-950 truncate">{ev.message}</div>
+                          <div className="text-[11px] font-bold text-gray-600 shrink-0">
                             {createdAt ? format(createdAt, 'dd/MM/yyyy HH:mm') : ''}
                           </div>
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 text-[10px] font-black ring-1 ring-emerald-200/70">
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 text-[11px] font-semibold ring-1 ring-emerald-200/70">
                             {String(ev.event_type || '')}
                           </span>
                           {actorEmail ? (
-                            <span className="text-[10px] font-bold text-gray-700 dir-ltr">{String(actorEmail)}</span>
+                            <span className="text-[11px] font-bold text-gray-700 dir-ltr">{String(actorEmail)}</span>
                           ) : null}
                         </div>
                       </div>
@@ -5874,11 +5817,11 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
           {activeTab === 'summary' && (
             <>
-          <div className="sm:hidden grid grid-cols-2 gap-2 px-[5px]">
-            <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-3 shadow-sm">
+          <div className="sm:hidden grid grid-cols-1 gap-4">
+            <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] font-black text-emerald-950">بيانات الحجز</div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                <div className="text-[11px] font-semibold text-emerald-950">بيانات الحجز</div>
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
                   booking.status === 'confirmed' ? 'bg-green-100 text-green-900' :
                   booking.status === 'pending_deposit' ? 'bg-yellow-100 text-yellow-900' :
                   booking.status === 'checked_in' ? 'bg-blue-100 text-blue-900' :
@@ -5892,30 +5835,30 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                    booking.status === 'cancelled' ? 'ملغي' : booking.status}
                 </span>
               </div>
-              <div className="mt-2 space-y-2 text-[10px]">
+              <div className="mt-2 space-y-2 text-[11px]">
                 <div>
                   <div className="text-gray-500 font-bold">العميل</div>
-                  <div className="text-gray-900 font-black truncate">{booking.customer?.full_name || '-'}</div>
+                  <div className="text-gray-900 font-semibold truncate">{booking.customer?.full_name || '-'}</div>
                   <div className="text-gray-600 font-mono truncate" dir="ltr">{booking.customer?.phone || '-'}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white/70 ring-1 ring-emerald-100/70 rounded-xl p-2">
+                  <div className="bg-white/70 ring-1 ring-stone-200/80 rounded-xl p-2">
                     <div className="text-gray-500 font-bold">الوحدة</div>
-                    <div className="text-gray-900 font-black truncate">{booking.unit?.unit_number || '-'}</div>
+                    <div className="text-gray-900 font-semibold truncate">{booking.unit?.unit_number || '-'}</div>
                   </div>
-                  <div className="bg-white/70 ring-1 ring-emerald-100/70 rounded-xl p-2">
+                  <div className="bg-white/70 ring-1 ring-stone-200/80 rounded-xl p-2">
                     <div className="text-gray-500 font-bold">النوع</div>
-                    <div className="text-gray-900 font-black truncate">{booking.unit?.unit_type?.name || '-'}</div>
+                    <div className="text-gray-900 font-semibold truncate">{booking.unit?.unit_type?.name || '-'}</div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white/70 ring-1 ring-emerald-100/70 rounded-xl p-2">
+                  <div className="bg-white/70 ring-1 ring-stone-200/80 rounded-xl p-2">
                     <div className="text-gray-500 font-bold">الوصول</div>
-                    <div className="text-gray-900 font-black font-mono">{format(new Date(booking.check_in), 'dd/MM/yy')}</div>
+                    <div className="text-gray-900 font-semibold font-mono">{format(new Date(booking.check_in), 'dd/MM/yy')}</div>
                   </div>
-                  <div className="bg-white/70 ring-1 ring-emerald-100/70 rounded-xl p-2">
+                  <div className="bg-white/70 ring-1 ring-stone-200/80 rounded-xl p-2">
                     <div className="text-gray-500 font-bold">المغادرة</div>
-                    <div className="text-gray-900 font-black font-mono">
+                    <div className="text-gray-900 font-semibold font-mono">
                       {(() => {
                         const outISO = String(booking.check_out || '').split('T')[0];
                         if (!outISO) return '-';
@@ -5929,16 +5872,16 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   <button
                     type="button"
                     onClick={openTerminateContractModal}
-                    className="w-full mt-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-800 font-extrabold text-[11px] hover:bg-red-100"
+                    className="w-full mt-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-800 font-semibold text-[11px] hover:bg-red-100"
                   >
                     فسخ العقد
                   </button>
                 )}
               </div>
             </div>
-            <div className="rounded-2xl bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 shadow-sm ring-1 ring-emerald-900/20 p-3 text-white">
+            <div className="rounded-2xl bg-emerald-900 shadow-sm ring-1 ring-emerald-900/20 p-3 text-white">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] font-extrabold">الملخص المالي</div>
+                <div className="text-[11px] font-semibold">الملخص المالي</div>
                 {isAdmin && (
                   <button
                     type="button"
@@ -5983,14 +5926,14 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <button
                       type="button"
                       onClick={() => { setNewCheckIn(booking.check_in?.split('T')[0]); setNewCheckOut(booking.check_out?.split('T')[0]); setShowReschedule(true); }}
-                      className="px-2 py-1 rounded-xl ring-1 ring-white/20 bg-white/10 hover:bg-white/15 text-[10px] font-extrabold text-white transition-colors"
+                      className="px-2 py-1 rounded-xl ring-1 ring-white/20 bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-white transition-colors"
                     >
                       تعديل
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowDelay(true)}
-                      className="px-2 py-1 rounded-xl ring-1 ring-white/20 bg-white/10 hover:bg-white/15 text-[10px] font-extrabold text-white transition-colors"
+                      className="px-2 py-1 rounded-xl ring-1 ring-white/20 bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-white transition-colors"
                     >
                       تأخير
                     </button>
@@ -6003,25 +5946,25 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       setShowChangeUnit(true);
                       handleFetchAvailableUnits();
                     }}
-                    className="px-2 py-1 rounded-xl ring-1 ring-white/20 bg-white/10 hover:bg-white/15 text-[10px] font-extrabold text-white transition-colors"
+                    className="px-2 py-1 rounded-xl ring-1 ring-white/20 bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-white transition-colors"
                     title="تغيير الوحدة"
                   >
                     تغيير وحدة
                   </button>
                 )}
               </div>
-              <div className="mt-2 space-y-2 text-[10px]">
+              <div className="mt-2 space-y-2 text-[11px]">
                 <div className="flex items-center justify-between">
                   <span className="text-white/85 font-bold">الإجمالي</span>
-                  <span className="text-white font-extrabold font-mono">{totalAmount.toLocaleString('en-US')} <span className="text-[9px]">ر.س</span></span>
+                  <span className="text-white font-semibold font-mono">{totalAmount.toLocaleString('en-US')} <span className="text-[11px]">ر.س</span></span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-emerald-50 font-bold">المدفوع</span>
-                  <span className="text-emerald-50 font-extrabold font-mono">{paidAmount.toLocaleString('en-US')} <span className="text-[9px]">ر.س</span></span>
+                  <span className="text-emerald-50 font-semibold font-mono">{paidAmount.toLocaleString('en-US')} <span className="text-[11px]">ر.س</span></span>
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-white/15">
-                  <span className="text-rose-100 font-extrabold">المتبقي</span>
-                  <span className="text-rose-100 font-extrabold font-mono">{remainingAmount.toLocaleString('en-US')} <span className="text-[9px]">ر.س</span></span>
+                  <span className="text-rose-100 font-semibold">المتبقي</span>
+                  <span className="text-rose-100 font-semibold font-mono">{remainingAmount.toLocaleString('en-US')} <span className="text-[11px]">ر.س</span></span>
                 </div>
               </div>
               {remainingAmount > 0 && (
@@ -6038,7 +5981,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     setAmount(remainingAmount.toString());
                     setShowPaymentModal(true);
                   }}
-                  className="w-full mt-3 bg-white/10 hover:bg-white/15 text-white py-2 rounded-2xl font-extrabold shadow-sm transition-colors flex items-center justify-center gap-2 text-[11px] ring-1 ring-white/20"
+                  className="w-full mt-3 bg-white/10 hover:bg-white/15 text-white py-2 rounded-2xl font-semibold shadow-sm transition-colors flex items-center justify-center gap-2 text-[11px] ring-1 ring-white/20"
                 >
                   <CreditCard size={16} />
                   سداد
@@ -6047,9 +5990,9 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             </div>
           </div>
 
-          <div className="hidden sm:block rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 shadow-sm">
+          <div className="hidden sm:block rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-6 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 mb-4 sm:mb-6">
-              <h2 className="text-base sm:text-lg font-extrabold text-emerald-950 flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-semibold text-emerald-950 flex items-center gap-2">
                 <Calendar className="text-emerald-700" size={20} />
                 بيانات الحجز
               </h2>
@@ -6071,13 +6014,13 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <>
                   <button
                     onClick={() => { setNewCheckIn(booking.check_in?.split('T')[0]); setNewCheckOut(booking.check_out?.split('T')[0]); setShowReschedule(true); }}
-                    className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 rounded-xl hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs transition-colors"
+                    className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 rounded-xl hover:bg-emerald-50 text-emerald-950 font-semibold text-xs transition-colors"
                   >
                     تعديل التواريخ (أدمن)
                   </button>
                   <button
                     onClick={() => setShowDelay(true)}
-                    className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 rounded-xl hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs transition-colors"
+                    className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 rounded-xl hover:bg-emerald-50 text-emerald-950 font-semibold text-xs transition-colors"
                   >
                     تأخير الحجز (أدمن)
                   </button>
@@ -6088,13 +6031,13 @@ if (activeInvoice && activeInvoice.status === 'draft') {
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
               <div>
-                <label className="text-xs sm:text-sm text-emerald-950 font-extrabold block mb-1">العميل</label>
-                <div className="font-extrabold text-base sm:text-lg text-emerald-950">{booking.customer?.full_name}</div>
+                <label className="text-xs sm:text-sm text-emerald-950 font-semibold block mb-1">العميل</label>
+                <div className="font-semibold text-base sm:text-lg text-emerald-950">{booking.customer?.full_name}</div>
                 <div className="text-xs sm:text-sm text-emerald-950 font-mono font-bold">{booking.customer?.phone}</div>
               </div>
               <div>
-                <label className="text-xs sm:text-sm text-emerald-950 font-extrabold block mb-1">الوحدة</label>
-                <div className="font-extrabold text-base sm:text-lg text-emerald-950 flex items-center gap-2">
+                <label className="text-xs sm:text-sm text-emerald-950 font-semibold block mb-1">الوحدة</label>
+                <div className="font-semibold text-base sm:text-lg text-emerald-950 flex items-center gap-2">
                   <Home size={16} className="text-emerald-800" />
                   {booking.unit?.unit_number}
                   {(isAdmin || isManager) && ['confirmed', 'checked_in', 'pending_deposit'].includes(booking.status) && (
@@ -6113,12 +6056,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <div className="text-xs sm:text-sm text-emerald-950 font-bold">{booking.unit?.unit_type?.name}</div>
               </div>
               <div>
-                <label className="text-xs sm:text-sm text-emerald-950 font-extrabold block mb-1">تاريخ الوصول</label>
-                <div className="font-extrabold text-base sm:text-lg text-emerald-950">{format(new Date(booking.check_in), 'dd/MM/yyyy')}</div>
+                <label className="text-xs sm:text-sm text-emerald-950 font-semibold block mb-1">تاريخ الوصول</label>
+                <div className="font-semibold text-base sm:text-lg text-emerald-950">{format(new Date(booking.check_in), 'dd/MM/yyyy')}</div>
               </div>
               <div>
-                <label className="text-xs sm:text-sm text-emerald-950 font-extrabold block mb-1">تاريخ المغادرة</label>
-                <div className="font-extrabold text-base sm:text-lg text-emerald-950">
+                <label className="text-xs sm:text-sm text-emerald-950 font-semibold block mb-1">تاريخ المغادرة</label>
+                <div className="font-semibold text-base sm:text-lg text-emerald-950">
                   {(() => {
                     const outISO = String(booking.check_out || '').split('T')[0];
                     if (!outISO) return '-';
@@ -6136,7 +6079,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <button
                       type="button"
                       onClick={openTerminateContractModal}
-                      className="px-3 py-2 rounded-xl bg-red-600 text-white font-black text-xs hover:bg-red-700"
+                      className="px-3 py-2 rounded-xl bg-red-600 text-white font-semibold text-xs hover:bg-red-700"
                     >
                       فسخ العقد
                     </button>
@@ -6166,10 +6109,10 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <div key={key.id} className="bg-white p-3 rounded-lg border border-blue-200 shadow-sm flex flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="text-lg font-mono font-black text-blue-700 tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                          <span className="text-lg font-mono font-semibold text-blue-700 tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                             {key.passcode}
                           </span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold uppercase ${
                             key.status === 'active' ? 'bg-green-100 text-green-700' : 
                             key.status === 'frozen' ? 'bg-yellow-100 text-yellow-700' : 
                             'bg-red-100 text-red-700'
@@ -6180,16 +6123,16 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         {key.sync_status === 'failed' && (
                           <div className="flex items-center gap-1 text-red-600" title={key.error_message}>
                             <AlertTriangle size={14} />
-                            <span className="text-[10px] font-bold">خطأ مزامنة</span>
+                            <span className="text-[11px] font-bold">خطأ مزامنة</span>
                           </div>
                         )}
                       </div>
                       <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1 text-[10px] text-gray-500">
+                        <div className="flex items-center gap-1 text-[11px] text-gray-500">
                           <Clock size={12} />
                           <span>من: {format(new Date(key.start_date), 'yyyy-MM-dd HH:mm')}</span>
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] text-gray-500">
+                        <div className="flex items-center gap-1 text-[11px] text-gray-500">
                           <Clock size={12} />
                           <span>إلى: {format(new Date(key.end_date), 'yyyy-MM-dd HH:mm')}</span>
                         </div>
@@ -6224,8 +6167,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           )}
 
           {activeTab === 'summary' && (
-          <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 shadow-sm">
-            <h2 className="text-base sm:text-lg font-extrabold text-emerald-950 mb-4 sm:mb-6 flex items-center gap-2">
+          <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-6 shadow-sm">
+            <h2 className="text-base sm:text-lg font-semibold text-emerald-950 mb-4 sm:mb-6 flex items-center gap-2">
                 <FileText className="text-emerald-700" size={20} />
                 الفواتير
             </h2>
@@ -6238,7 +6181,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         return (
                         <div
                           key={inv.id}
-                          className="ring-1 ring-emerald-100/70 bg-white/70 rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:bg-emerald-50/60 transition-colors"
+                          className="ring-1 ring-stone-200/80 bg-white/70 rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:bg-emerald-50/60 transition-colors"
                         >
                             <div>
                                 <div className="flex items-center gap-2 mb-1">
@@ -6261,7 +6204,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                         {inv.total_amount?.toLocaleString()} <span className="text-xs">ر.س</span>
                                      </div>
                                      {displayStatus !== 'paid' && displayStatus !== 'draft' && (
-                                       <div className="text-[10px] font-black text-emerald-800 mt-1 bg-emerald-50 px-1.5 py-0.5 rounded-md inline-block border border-emerald-200">
+                                       <div className="text-[11px] font-semibold text-emerald-800 mt-1 bg-emerald-50 px-1.5 py-0.5 rounded-md inline-block border border-emerald-200">
                                          المتبقي: {fin.remaining.toLocaleString()} ر.س
                                        </div>
                                      )}
@@ -6278,7 +6221,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                      {canAccounting && inv.status === 'draft' && (
                                        <button
                                          onClick={() => openInvoiceEdit(inv)}
-                                         className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 text-sm font-extrabold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-1"
+                                         className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 text-sm font-semibold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-1"
                                          title="تعديل الفاتورة"
                                        >
                                          <Edit size={14} />
@@ -6300,7 +6243,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                        <button 
                                         onClick={() => handlePostInvoice(inv)}
                                          disabled={isIssuing}
-                                         className="px-3 py-1.5 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white text-sm font-extrabold rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all flex items-center gap-1"
+                                         className="px-3 py-1.5 bg-emerald-900 text-white text-sm font-semibold rounded-xl hover:bg-emerald-800 transition-all flex items-center gap-1"
                                        >
                                          {isIssuing ? <Loader2 className="animate-spin" size={14} /> : <FileText size={14} />}
                                          ترحيل الفاتورة
@@ -6313,7 +6256,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                            setAmount(getInvoiceRemaining(inv.id).toString());
                                            setShowPaymentModal(true);
                                          }}
-                                         className="px-3 py-1.5 bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 text-white text-sm font-extrabold rounded-xl hover:from-emerald-600 hover:via-emerald-700 hover:to-emerald-800 transition-all"
+                                         className="px-3 py-1.5 bg-emerald-900 text-white text-sm font-semibold rounded-xl hover:bg-emerald-800 transition-all"
                                        >
                                          سداد
                                        </button>
@@ -6322,7 +6265,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                        <button
                                          onClick={() => handleUnpostInvoice(inv)}
                                          disabled={loading}
-                                         className="px-3 py-1.5 bg-amber-600 text-white text-sm font-extrabold rounded-xl hover:bg-amber-700 transition-colors flex items-center gap-1"
+                                         className="px-3 py-1.5 bg-amber-600 text-white text-sm font-semibold rounded-xl hover:bg-amber-700 transition-colors flex items-center gap-1"
                                          title="إلغاء الترحيل"
                                        >
                                          {loading ? <Loader2 className="animate-spin" size={14} /> : <X size={14} />}
@@ -6342,7 +6285,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                       <button
                                         onClick={() => openExtensionEdit(inv)}
                                         disabled={loading}
-                                        className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 text-sm font-extrabold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-1"
+                                        className="px-3 py-1.5 bg-white/70 ring-1 ring-emerald-200/70 text-emerald-950 text-sm font-semibold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-1"
                                         title="تعديل التمديد (تاريخ + مبالغ) مع انعكاسه على الحجز"
                                       >
                                         <Edit size={14} />
@@ -6383,15 +6326,15 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           )}
 
           {activeTab === 'summary' && (
-          <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 shadow-sm">
-            <h2 className="text-base sm:text-lg font-extrabold text-emerald-950 mb-3 sm:mb-4 flex items-center gap-2">
+          <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-6 shadow-sm">
+            <h2 className="text-base sm:text-lg font-semibold text-emerald-950 mb-3 sm:mb-4 flex items-center gap-2">
               <Banknote className="text-emerald-700" size={20} />
               سجل العمليات المالية
             </h2>
             
-            <div className="overflow-x-auto rounded-2xl ring-1 ring-emerald-100/70 bg-white/70">
+            <div className="overflow-x-auto rounded-2xl ring-1 ring-stone-200/80 bg-white/70">
               <table className="w-full text-xs sm:text-sm">
-                <thead className="bg-emerald-50 text-emerald-950 font-extrabold">
+                <thead className="bg-emerald-50 text-emerald-950 font-semibold">
                   <tr>
                     <th className="px-2 sm:px-4 py-2 text-right">التاريخ</th>
                     <th className="px-2 sm:px-4 py-2 text-right">النوع</th>
@@ -6488,7 +6431,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                 const paymentId = paymentJournalMap[txn.id];
                                 if (!paymentId) return (
                                   <div className="flex items-center gap-1">
-                                    <span className="text-amber-600 text-[10px] font-bold">سند مفقود</span>
+                                    <span className="text-amber-600 text-[11px] font-bold">سند مفقود</span>
                                     {canAccounting && (
                                       <button
                                         onClick={() => handleDeleteOrphanedJournal(txn.id)}
@@ -6602,8 +6545,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
         {activeTab === 'summary' && (
         <div className="space-y-4 lg:space-y-6">
-          <div className="rounded-2xl ring-1 ring-emerald-100/70 bg-gradient-to-br from-emerald-50 via-white to-white p-4 sm:p-6 shadow-sm">
-            <h2 className="text-base sm:text-lg font-extrabold text-emerald-950 mb-4 sm:mb-6 flex items-center gap-2">
+          <div className="rounded-2xl ring-1 ring-stone-200/80 bg-white p-4 sm:p-6 shadow-sm">
+            <h2 className="text-base sm:text-lg font-semibold text-emerald-950 mb-4 sm:mb-6 flex items-center gap-2">
               <Banknote className="text-emerald-700" size={20} />
               سندات التأمين (منفصلة)
             </h2>
@@ -6620,7 +6563,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   return (
                     <div
                       key={ev.id}
-                      className="ring-1 ring-emerald-100/70 bg-white/70 rounded-2xl p-3 sm:p-4 flex items-center justify-between hover:bg-emerald-50/60 transition-colors"
+                      className="ring-1 ring-stone-200/80 bg-white/70 rounded-2xl p-3 sm:p-4 flex items-center justify-between hover:bg-emerald-50/60 transition-colors"
                     >
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
@@ -6648,9 +6591,9 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
             )}
           </div>
-          <div className="hidden sm:block rounded-2xl bg-gradient-to-l from-emerald-700 via-emerald-800 to-emerald-900 shadow-sm ring-1 ring-emerald-900/20 p-4 sm:p-6 text-white">
+          <div className="hidden sm:block rounded-2xl bg-emerald-900 shadow-sm ring-1 ring-emerald-900/20 p-4 sm:p-6 text-white">
             <div className="flex items-center justify-between mb-4 sm:mb-6">
-              <h2 className="text-base sm:text-lg font-extrabold">الملخص المالي</h2>
+              <h2 className="text-base sm:text-lg font-semibold">الملخص المالي</h2>
               {isAdmin && (
                 <button 
                   onClick={() => setShowEditPrice(true)}
@@ -6672,7 +6615,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 {booking.additional_services && Array.isArray(booking.additional_services) && booking.additional_services.length > 0 && (
                   <div className="flex justify-between items-center text-emerald-50">
                     <span>خدمات إضافية</span>
-                    <span className="font-extrabold text-emerald-100">
+                    <span className="font-semibold text-emerald-100">
                         +{(booking.additional_services.reduce((acc: number, curr: any) => acc + (curr.amount || 0), 0)).toLocaleString('en-US')} <span className="text-xs">ر.س</span>
                     </span>
                   </div>
@@ -6681,7 +6624,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 {booking.discount_amount > 0 && (
                   <div className="flex justify-between items-center text-white/85">
                     <span>الخصم</span>
-                    <span className="font-extrabold text-rose-100">-{booking.discount_amount?.toLocaleString('en-US')} <span className="text-xs">ر.س</span></span>
+                    <span className="font-semibold text-rose-100">-{booking.discount_amount?.toLocaleString('en-US')} <span className="text-xs">ر.س</span></span>
                   </div>
                 )}
 
@@ -6692,21 +6635,21 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
 
               <div className="flex justify-between items-center pb-4 border-b border-white/15">
-                <span className="font-extrabold">إجمالي الحجز</span>
-                <span className="font-extrabold text-lg sm:text-xl">{totalAmount.toLocaleString('en-US')} <span className="text-xs sm:text-sm font-extrabold">ر.س</span></span>
+                <span className="font-semibold">إجمالي الحجز</span>
+                <span className="font-semibold text-lg sm:text-xl">{totalAmount.toLocaleString('en-US')} <span className="text-xs sm:text-sm font-semibold">ر.س</span></span>
               </div>
               
               <div className="flex justify-between items-center text-emerald-50">
-                <span className="flex items-center gap-2 font-extrabold">
+                <span className="flex items-center gap-2 font-semibold">
                   <CheckCircle size={16} />
                   المدفوع
                 </span>
-                <span className="font-extrabold text-base sm:text-lg">{paidAmount.toLocaleString('en-US')} <span className="text-xs sm:text-sm font-extrabold">ر.س</span></span>
+                <span className="font-semibold text-base sm:text-lg">{paidAmount.toLocaleString('en-US')} <span className="text-xs sm:text-sm font-semibold">ر.س</span></span>
               </div>
 
               <div className="flex justify-between items-center text-rose-100 pt-4 border-t border-white/15">
-                <span className="font-extrabold">المتبقي</span>
-                <span className="font-extrabold text-xl sm:text-2xl">{remainingAmount.toLocaleString('en-US')} <span className="text-xs sm:text-sm font-extrabold">ر.س</span></span>
+                <span className="font-semibold">المتبقي</span>
+                <span className="font-semibold text-xl sm:text-2xl">{remainingAmount.toLocaleString('en-US')} <span className="text-xs sm:text-sm font-semibold">ر.س</span></span>
               </div>
 
               {remainingAmount > 0 && (
@@ -6722,7 +6665,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     setAmount(remainingAmount.toString());
                     setShowPaymentModal(true);
                   }}
-                  className="w-full mt-4 sm:mt-6 bg-white/10 hover:bg-white/15 text-white py-2.5 sm:py-3 rounded-2xl font-extrabold shadow-sm transition-colors flex items-center justify-center gap-2 text-sm ring-1 ring-white/20"
+                  className="w-full mt-4 sm:mt-6 bg-white/10 hover:bg-white/15 text-white py-2.5 sm:py-3 rounded-2xl font-semibold shadow-sm transition-colors flex items-center justify-center gap-2 text-sm ring-1 ring-white/20"
                 >
                   <CreditCard size={20} />
                   سداد دفعة / عربون
@@ -6730,7 +6673,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               )}
               
               {remainingAmount <= 0 && (
-                <div className="mt-6 bg-white/10 text-emerald-50 py-3 rounded-2xl text-center font-extrabold ring-1 ring-white/20">
+                <div className="mt-6 bg-white/10 text-emerald-50 py-3 rounded-2xl text-center font-semibold ring-1 ring-white/20">
                   تم السداد بالكامل
                 </div>
               )}
@@ -6793,13 +6736,13 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         isOverdue ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'
                       }`}>
                         {isToday && !isFullyPaid && (
-                          <div className="absolute top-0 right-0 px-2 py-0.5 bg-white text-red-600 text-[8px] font-black uppercase tracking-tighter rounded-bl-lg shadow-sm">
+                          <div className="absolute top-0 right-0 px-2 py-0.5 bg-white text-red-600 text-[11px] font-semibold uppercase tracking-tighter rounded-bl-lg shadow-sm">
                             موعد الاستحقاق اليوم
                           </div>
                         )}
                         <div className="flex justify-between items-center mb-1">
                           <span className={`text-sm font-bold ${isToday && !isFullyPaid ? 'text-white' : 'text-gray-700'}`}>الدفعة {num}</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                             isFullyPaid ? 'bg-green-100 text-green-700' :
                             isToday ? 'bg-white text-red-600 animate-bounce' :
                             isOverdue ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
@@ -6808,20 +6751,20 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                           </span>
                         </div>
                         <div className="flex justify-between items-end">
-                          <div className={`text-[10px] ${isToday && !isFullyPaid ? 'text-white/80' : 'text-gray-500'}`}>
+                          <div className={`text-[11px] ${isToday && !isFullyPaid ? 'text-white/80' : 'text-gray-500'}`}>
                             تاريخ الاستحقاق: <span className="font-mono">{format(dueDate, 'dd/MM/yyyy')}</span>
                           </div>
                           <div className="text-right">
                             <div className={`text-sm font-bold ${isToday && !isFullyPaid ? 'text-white' : 'text-gray-900'}`}>
-                              {amountForThisInstallment.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} <span className="text-[10px]">ر.س</span>
+                              {amountForThisInstallment.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} <span className="text-[11px]">ر.س</span>
                             </div>
                             {!isFullyPaid && amountPaidForThis > 0 && (
-                              <div className={`text-[10px] font-bold ${isToday ? 'text-green-200' : 'text-green-600'}`}>
+                              <div className={`text-[11px] font-bold ${isToday ? 'text-green-200' : 'text-green-600'}`}>
                                 مدفوع: {amountPaidForThis.toLocaleString()} ر.س
                               </div>
                             )}
                             {remainingForThis > 0 && remainingForThis < amountForThisInstallment && (
-                              <div className={`text-[10px] font-bold ${isToday ? 'text-white underline' : 'text-red-600'}`}>
+                              <div className={`text-[11px] font-bold ${isToday ? 'text-white underline' : 'text-red-600'}`}>
                                 متبقي: {remainingForThis.toLocaleString()} ر.س
                               </div>
                             )}
@@ -6831,7 +6774,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     );
                   });
                 })()}
-                <p className="text-[10px] text-gray-400 mt-2 italic text-center">
+                <p className="text-[11px] text-gray-400 mt-2 italic text-center">
                   * تم احتساب الأقساط بناءً على تاريخ الدخول ومدى تغطية المبالغ المسددة لكل شهر.
                 </p>
               </div>
@@ -6856,8 +6799,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <CreditCard size={20} className="text-white" />
                   </div>
                   <div>
-                    <h3 className="text-lg sm:text-xl font-black leading-none mb-1">تسجيل سداد جديد</h3>
-                    <p className="text-blue-100 text-[10px] sm:text-xs font-medium">سند قبض مالي جديد</p>
+                    <h3 className="text-lg sm:text-xl font-semibold leading-none mb-1">تسجيل سداد جديد</h3>
+                    <p className="text-blue-100 text-[11px] sm:text-xs font-medium">سند قبض مالي جديد</p>
                   </div>
                 </div>
                 <button
@@ -6880,21 +6823,21 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 return (
                 <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 grid grid-cols-3 gap-2">
                   <div className="text-center">
-                    <p className="text-[10px] text-slate-500 mb-1">{selectedInvoiceId ? 'إجمالي الفاتورة' : 'إجمالي الحجز'}</p>
-                    <p className="text-xs sm:text-sm font-black text-slate-900">
-                      {(selectedInvoiceId ? (invoices.find(i => i.id === selectedInvoiceId)?.total_amount || 0) : totalAmount).toLocaleString('en-US')} <span className="text-[9px]">ر.س</span>
+                    <p className="text-[11px] text-slate-500 mb-1">{selectedInvoiceId ? 'إجمالي الفاتورة' : 'إجمالي الحجز'}</p>
+                    <p className="text-xs sm:text-sm font-semibold text-slate-900">
+                      {(selectedInvoiceId ? (invoices.find(i => i.id === selectedInvoiceId)?.total_amount || 0) : totalAmount).toLocaleString('en-US')} <span className="text-[11px]">ر.س</span>
                     </p>
                   </div>
                   <div className="text-center border-x border-slate-200">
-                    <p className="text-[10px] text-slate-500 mb-1">المسدد</p>
-                    <p className="text-xs sm:text-sm font-black text-emerald-600">
-                      {(fin ? fin.paid : paidAmount).toLocaleString('en-US')} <span className="text-[9px]">ر.س</span>
+                    <p className="text-[11px] text-slate-500 mb-1">المسدد</p>
+                    <p className="text-xs sm:text-sm font-semibold text-emerald-600">
+                      {(fin ? fin.paid : paidAmount).toLocaleString('en-US')} <span className="text-[11px]">ر.س</span>
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-[10px] text-slate-500 mb-1">المتبقي</p>
-                    <p className="text-xs sm:text-sm font-black text-blue-600">
-                      {(fin ? fin.remaining : remainingAmount).toLocaleString('en-US')} <span className="text-[9px]">ر.س</span>
+                    <p className="text-[11px] text-slate-500 mb-1">المتبقي</p>
+                    <p className="text-xs sm:text-sm font-semibold text-blue-600">
+                      {(fin ? fin.remaining : remainingAmount).toLocaleString('en-US')} <span className="text-[11px]">ر.س</span>
                     </p>
                   </div>
                 </div>
@@ -6905,7 +6848,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Amount Field */}
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-black text-slate-700 mb-1.5 mr-1">المبلغ المطلوب سداده</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5 mr-1">المبلغ المطلوب سداده</label>
                     <div className="relative group">
                       <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-600 transition-colors">
                         <DollarSign size={18} />
@@ -6914,7 +6857,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         type="number"
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
-                        className={`w-full pr-11 pl-4 py-3 sm:py-4 bg-slate-50 border-2 rounded-2xl focus:ring-0 outline-none font-black text-xl sm:text-2xl transition-all ${
+                        className={`w-full pr-11 pl-4 py-3 sm:py-4 bg-slate-50 border-2 rounded-2xl focus:ring-0 outline-none font-semibold text-xl sm:text-2xl transition-all ${
                           Number(amount) > (selectedInvoiceId ? getInvoiceRemaining(selectedInvoiceId) : remainingAmount) + 0.01
                             ? 'border-amber-400 focus:border-amber-500 bg-amber-50/30'
                             : 'border-slate-100 focus:border-blue-600 focus:bg-white'
@@ -6924,13 +6867,13 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         min="1"
                       />
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <span className="text-xs font-black text-slate-400">ر.س</span>
+                        <span className="text-xs font-semibold text-slate-400">ر.س</span>
                       </div>
                     </div>
                     {Number(amount) > (selectedInvoiceId ? getInvoiceRemaining(selectedInvoiceId) : remainingAmount) + 0.01 && (
                       <div className="mt-2 p-2 bg-amber-50 border border-amber-100 rounded-xl flex items-center gap-2 text-amber-700 animate-in fade-in slide-in-from-top-1">
                         <AlertTriangle size={14} className="shrink-0" />
-                        <p className="text-[10px] font-bold">
+                        <p className="text-[11px] font-bold">
                           تحذير: المبلغ المدخل يتجاوز {selectedInvoiceId ? 'المتبقي من الفاتورة' : 'المتبقي من الحجز'}
                         </p>
                       </div>
@@ -6940,7 +6883,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         <button 
                           type="button"
                           onClick={() => setAmount((selectedInvoiceId ? getInvoiceRemaining(selectedInvoiceId) : remainingAmount).toFixed(2))}
-                          className="text-[10px] font-black text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded-lg"
+                          className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded-lg"
                         >
                           سداد كامل المتبقي
                         </button>
@@ -6951,7 +6894,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   {/* Invoice Selection (if required) */}
                   {paymentRequireInvoice && (
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-black text-slate-700 mb-1.5 mr-1">اربط بالفاتورة</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1.5 mr-1">اربط بالفاتورة</label>
                       <select
                         value={selectedInvoiceId || ''}
                         onChange={(e) => setSelectedInvoiceId(e.target.value || null)}
@@ -6970,7 +6913,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
                   {/* Payment Date */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5 mr-1">تاريخ العملية</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5 mr-1">تاريخ العملية</label>
                     <div className="relative">
                       <input
                         type="date"
@@ -6984,7 +6927,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
                   {/* Reference Number */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5 mr-1">رقم المرجع (اختياري)</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5 mr-1">رقم المرجع (اختياري)</label>
                     <input
                       type="text"
                       value={referenceNumber}
@@ -6997,7 +6940,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
                 {/* Payment Methods */}
                 <div>
-                  <label className="block text-xs font-black text-slate-700 mb-2 mr-1">طريقة الدفع</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-2 mr-1">طريقة الدفع</label>
                   {paymentMethods.length > 0 ? (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {paymentMethods.map((method) => {
@@ -7007,7 +6950,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                             key={method.id}
                             type="button"
                             onClick={() => setPaymentMethodId(method.id)}
-                            className={`px-3 py-2.5 rounded-xl text-[11px] sm:text-xs font-black border-2 transition-all flex items-center justify-center gap-2 ${
+                            className={`px-3 py-2.5 rounded-xl text-[11px] sm:text-xs font-semibold border-2 transition-all flex items-center justify-center gap-2 ${
                               isSelected
                                 ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-200 scale-[1.02]'
                                 : 'bg-white border-slate-100 text-slate-600 hover:border-slate-200'
@@ -7029,7 +6972,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
                 {/* Description */}
                 <div>
-                  <label className="block text-xs font-black text-slate-700 mb-1.5 mr-1">ملاحظات إضافية</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 mr-1">ملاحظات إضافية</label>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
@@ -7043,7 +6986,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   <button
                     type="submit"
                     disabled={loading || !paymentMethodId}
-                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white py-4 rounded-[1.25rem] font-black shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:grayscale disabled:shadow-none active:scale-[0.98]"
+                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white py-4 rounded-[1.25rem] font-semibold shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:grayscale disabled:shadow-none active:scale-[0.98]"
                   >
                     {loading ? (
                       <Loader2 className="animate-spin" size={20} />
@@ -7054,7 +6997,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       </>
                     )}
                   </button>
-                  <p className="text-center text-[10px] text-slate-400 mt-3">بمجرد التأكيد سيتم ترحيل السند وتحديث الرصيد فوراً</p>
+                  <p className="text-center text-[11px] text-slate-400 mt-3">بمجرد التأكيد سيتم ترحيل السند وتحديث الرصيد فوراً</p>
                 </div>
               </form>
             </div>
@@ -7156,12 +7099,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
           <div className="p-6 overflow-y-auto space-y-4">
             {ejarEditMode ? (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 font-bold">
-                سيتم إعادة الحالة إلى: <span className="font-black">تم الرفع بانتظار التأكيد</span>
+                سيتم إعادة الحالة إلى: <span className="font-semibold">تم الرفع بانتظار التأكيد</span>
               </div>
             ) : null}
             {ejarSelectableInvoices.length > 1 ? (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                <div className="text-xs font-black text-amber-900 mb-2">اختيار الفاتورة (الحجز فيه أكثر من فاتورة)</div>
+                <div className="text-xs font-semibold text-amber-900 mb-2">اختيار الفاتورة (الحجز فيه أكثر من فاتورة)</div>
                 <select
                   value={ejarSelectedInvoiceId}
                   onChange={(e) => setEjarSelectedInvoiceId(e.target.value)}
@@ -7186,12 +7129,12 @@ if (activeInvoice && activeInvoice.status === 'draft') {
               </div>
             ) : null}
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
-              <div className="text-xs font-black text-gray-800 mb-2">تفاصيل الفاتورة</div>
+              <div className="text-xs font-semibold text-gray-800 mb-2">تفاصيل الفاتورة</div>
               {ejarInvoicePreview ? (
                 <div className="space-y-1.5 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-gray-500">رقم الفاتورة</span>
-                    <span className="font-black text-gray-900 dir-ltr">{String(ejarInvoicePreview.invoice_number || '-')}</span>
+                    <span className="font-semibold text-gray-900 dir-ltr">{String(ejarInvoicePreview.invoice_number || '-')}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-gray-500">تاريخ الفاتورة</span>
@@ -7235,8 +7178,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                   </div>
                   <div className="h-px bg-gray-200 my-2" />
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-gray-700 font-black">الإجمالي</span>
-                    <span className="font-black text-gray-900 dir-ltr">{(Math.round(ejarInvoicePreview.total * 100) / 100).toLocaleString()} ر.س</span>
+                    <span className="text-gray-700 font-semibold">الإجمالي</span>
+                    <span className="font-semibold text-gray-900 dir-ltr">{(Math.round(ejarInvoicePreview.total * 100) / 100).toLocaleString()} ر.س</span>
                   </div>
                 </div>
               ) : (
@@ -7469,7 +7412,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     <>
                       <div className="flex justify-between"><span>الصافي</span><span className="font-mono font-bold">{net.toLocaleString('en-US')} ر.س</span></div>
                       <div className="flex justify-between"><span>الضريبة</span><span className="font-mono font-bold">{tax.toLocaleString('en-US')} ر.س</span></div>
-                      <div className="flex justify-between"><span>الإجمالي</span><span className="font-mono font-black">{total.toLocaleString('en-US')} ر.س</span></div>
+                      <div className="flex justify-between"><span>الإجمالي</span><span className="font-mono font-semibold">{total.toLocaleString('en-US')} ر.س</span></div>
                     </>
                   );
                 })()}
@@ -7489,7 +7432,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-sm font-black disabled:opacity-50"
+                  className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-sm font-semibold disabled:opacity-50"
                 >
                   {loading ? 'جارٍ الحفظ...' : 'حفظ التعديل'}
                 </button>
@@ -7652,7 +7595,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
             <form onSubmit={handleUpdateBookingPrice} className="space-y-4">
               <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs text-gray-700">
-                <div className="font-black text-gray-900">مهم</div>
+                <div className="font-semibold text-gray-900">مهم</div>
                 <div className="mt-1">لا يمكن التعديل إذا كان هناك تمديد أو سندات قبض مرتبطة بالفاتورة الأساسية.</div>
               </div>
 
@@ -7711,8 +7654,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 rounded-xl border bg-white">
-                  <div className="text-[11px] font-black text-gray-900">المدة (بالأشهر)</div>
-                  <div className="mt-1 text-lg font-black text-gray-900">
+                  <div className="text-[11px] font-semibold text-gray-900">المدة (بالأشهر)</div>
+                  <div className="mt-1 text-lg font-semibold text-gray-900">
                     {(() => {
                       const start = newCheckIn ? new Date(`${newCheckIn}T00:00:00`) : null;
                       const end = newCheckOut ? new Date(`${newCheckOut}T00:00:00`) : null;
@@ -7721,7 +7664,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                       return months;
                     })()}
                   </div>
-                  <div className="mt-1 text-[10px] text-gray-500 font-bold">
+                  <div className="mt-1 text-[11px] text-gray-500 font-bold">
                     يتم تقريب المدة على أساس 30 يوم للشهر
                   </div>
                 </div>
@@ -7932,7 +7875,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-[10px] text-gray-500">
+                <p className="mt-1 text-[11px] text-gray-500">
                   تغيير طريقة الدفع سيؤدي لتحديث القيد المحاسبي في حساب (الصندوق/البنك) المرتبط.
                 </p>
               </div>
@@ -7963,7 +7906,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     عربون (L-ADV)
                   </button>
                 </div>
-                <p className="mt-1 text-[10px] text-gray-500">
+                <p className="mt-1 text-[11px] text-gray-500">
                   {editTransactionType === 'payment' 
                     ? 'يتم خصم المبلغ من مديونية العميل مباشرة.' 
                     : 'يتم تسجيل المبلغ كإيراد غير محقق (دفعة مقدمة).'}
@@ -7984,7 +7927,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-[10px] text-gray-500">
+                <p className="mt-1 text-[11px] text-gray-500">
                   يمكنك تغيير الفاتورة المرتبطة بهذا السند أو ربطه بفاتورة جديدة.
                 </p>
               </div>
@@ -8013,3 +7956,5 @@ if (activeInvoice && activeInvoice.status === 'draft') {
     </div>
   );
 }
+
+

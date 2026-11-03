@@ -49,11 +49,17 @@ const CUSTOMER_TYPES: { id: CustomerTypeEnum | 'all'; label: string; icon: any }
   { id: 'broker', label: 'وسطاء', icon: Briefcase },
 ];
 
+const PAGE_SIZE = 25;
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<(Customer & { latest_checkout?: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedType, setSelectedType] = useState<CustomerTypeEnum | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [activeTab, setActiveTab] = useState<'list' | 'crm' | 'segments'>('list');
   const [crmEvents, setCrmEvents] = useState<any[]>([]);
   const [crmType, setCrmType] = useState<string>('all');
@@ -102,12 +108,82 @@ export default function CustomersPage() {
   };
 
   useEffect(() => {
-    fetchCustomers();
-  }, [selectedType, searchQuery]);
-
-  useEffect(() => {
-    fetchActiveCustomers();
-  }, []);
+    const controller = new AbortController();
+    setLoading(true);
+    setActiveContactMenu(null);
+    const timer = setTimeout(async () => {
+      try {
+        setLoadError(null);
+        // Filter before pagination so active customers on later pages stay reachable.
+        let query = supabase.from('customers')
+          .select(onlyActive ? '*, active_bookings:bookings!inner(status)' : '*')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+        if (onlyActive) {
+          query = query.in('active_bookings.status', ['checked_in', 'confirmed'])
+            .limit(1, { referencedTable: 'active_bookings' });
+        }
+        if (selectedType !== 'all') query = query.eq('customer_type', selectedType);
+        const term = searchQuery.trim();
+        if (term) {
+          const pattern = JSON.stringify(`%${term}%`);
+          query = query.or(`full_name.ilike.${pattern},phone.ilike.${pattern},national_id.ilike.${pattern}`);
+        }
+        const start = (page - 1) * PAGE_SIZE;
+        // One extra row tells us whether another page exists without an exact count.
+        const { data, error } = await query.range(start, start + PAGE_SIZE).abortSignal(controller.signal);
+        if (controller.signal.aborted) return;
+        if (error) throw error;
+        const rows = (data || []) as unknown as Customer[];
+        if (rows.length === 0 && page > 1) {
+          setPage(page - 1);
+          return;
+        }
+        const visible = rows.slice(0, PAGE_SIZE);
+        const ids = visible.map(c => c.id);
+        if (ids.length === 0) {
+          setCustomers([]);
+          setActiveCustomerIds([]);
+          setHasNextPage(false);
+          return;
+        }
+        const [latest, active] = await Promise.all([
+          supabase.from('customers')
+            .select('id, bookings(check_out)')
+            .in('id', ids)
+            .in('bookings.status', ['confirmed', 'checked_in', 'checked_out'])
+            .order('check_out', { referencedTable: 'bookings', ascending: false, nullsFirst: false })
+            .limit(1, { referencedTable: 'bookings' })
+            .abortSignal(controller.signal),
+          supabase.from('customers')
+            .select('id, bookings!inner(status)')
+            .in('id', ids)
+            .in('bookings.status', ['checked_in', 'confirmed'])
+            .limit(1, { referencedTable: 'bookings' })
+            .abortSignal(controller.signal),
+        ]);
+        if (controller.signal.aborted) return;
+        if (latest.error) throw latest.error;
+        if (active.error) throw active.error;
+        const checkoutMap = new Map((latest.data || []).map(c => [c.id, c.bookings?.[0]?.check_out]));
+        setCustomers(visible.map(c => ({ ...c, latest_checkout: checkoutMap.get(c.id) })));
+        setActiveCustomerIds((active.data || []).map(c => c.id));
+        setHasNextPage(rows.length > PAGE_SIZE);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('Error fetching customers:', error);
+        setCustomers([]);
+        setHasNextPage(false);
+        setLoadError('تعذر تحميل العملاء. يرجى إعادة المحاولة.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, searchQuery.trim() ? 350 : 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [selectedType, searchQuery, onlyActive, page, refreshVersion]);
 
   useEffect(() => {
     if (activeTab === 'crm') {
@@ -119,82 +195,7 @@ export default function CustomersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, customers]);
 
-  const fetchCustomers = async () => {
-    setLoading(true);
-    try {
-      let query = supabase
-        .from('customers')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (selectedType !== 'all') {
-        query = query.eq('customer_type', selectedType);
-      }
-
-      if (searchQuery) {
-        query = query.or(`full_name.ilike.%${searchQuery}%,phone.ilike.%${searchQuery}%,national_id.ilike.%${searchQuery}%`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      // Fetch latest checkout for these customers
-      const customerIds = (data || []).map(c => c.id);
-      if (customerIds.length > 0) {
-        const { data: latestBookings } = await supabase
-          .from('bookings')
-          .select('customer_id, check_out')
-          .in('customer_id', customerIds)
-          .in('status', ['confirmed', 'checked_in', 'checked_out'])
-          .order('check_out', { ascending: false });
-
-        const checkoutMap: Record<string, string> = {};
-        (latestBookings || []).forEach(b => {
-          if (!checkoutMap[b.customer_id]) {
-            checkoutMap[b.customer_id] = b.check_out;
-          }
-        });
-
-        const customersWithCheckout = (data || []).map(c => ({
-          ...c,
-          latest_checkout: checkoutMap[c.id]
-        }));
-        // @ts-ignore
-        setCustomers(customersWithCheckout);
-      } else {
-        // @ts-ignore
-        setCustomers(data || []);
-      }
-    } catch (error) {
-      console.error('Error fetching customers:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchActiveCustomers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('customer_id, status')
-        .in('status', ['checked_in', 'confirmed']);
-
-      if (error) throw error;
-
-      const ids = Array.from(
-        new Set(
-          (data || [])
-            .map((b: any) => b.customer_id)
-            .filter((id: string | null) => !!id)
-        )
-      ) as string[];
-
-      setActiveCustomerIds(ids);
-    } catch (error) {
-      console.error('Error fetching active customers:', error);
-    }
-  };
+  const fetchCustomers = () => setRefreshVersion(version => version + 1);
 
   const loadCrmEvents = async () => {
     let query = supabase
@@ -303,7 +304,7 @@ export default function CustomersPage() {
 
       if (data.success) {
         alert(data.message);
-        setCustomers(prev => prev.filter(c => c.id !== customer.id));
+        fetchCustomers();
       } else {
         alert(data.message);
       }
@@ -374,8 +375,6 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      {activeTab === 'list' && (
-      <>
       {/* Filters & Search */}
       <div className="flex flex-col md:flex-row gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
         <div className="flex-1 relative">
@@ -385,14 +384,14 @@ export default function CustomersPage() {
             placeholder="بحث بالاسم، رقم الجوال، أو الهوية..."
             className="w-full pr-10 pl-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
           />
         </div>
         <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
           {CUSTOMER_TYPES.map((type) => (
             <button
               key={type.id}
-              onClick={() => setSelectedType(type.id as CustomerTypeEnum | 'all')}
+              onClick={() => { setSelectedType(type.id); setPage(1); }}
               className={`
                 flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap transition-all
                 ${selectedType === type.id 
@@ -410,7 +409,7 @@ export default function CustomersPage() {
 
       <div className="flex flex-wrap gap-2">
         <button
-          onClick={() => setOnlyActive(false)}
+          onClick={() => { setOnlyActive(false); setPage(1); }}
           className={`px-3 py-1.5 rounded-full text-xs font-medium border ${
             !onlyActive ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-600 border-gray-200'
           }`}
@@ -418,7 +417,7 @@ export default function CustomersPage() {
           كل العملاء
         </button>
         <button
-          onClick={() => setOnlyActive(true)}
+          onClick={() => { setOnlyActive(true); setPage(1); }}
           className={`px-3 py-1.5 rounded-full text-xs font-medium border flex items-center gap-1 ${
             onlyActive ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-600 border-gray-200'
           }`}
@@ -428,11 +427,19 @@ export default function CustomersPage() {
         </button>
       </div>
 
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <span>{loadError}</span>
+          <button onClick={fetchCustomers} disabled={loading} className="font-bold disabled:opacity-50">إعادة المحاولة</button>
+        </div>
+      )}
+      {activeTab === 'list' && (
+      <>
       {loading ? (
         <div className="flex justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
-      ) : filteredCustomers.length === 0 ? (
+      ) : loadError ? null : filteredCustomers.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
           <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
             <User className="text-gray-400" size={32} />
@@ -646,10 +653,14 @@ export default function CustomersPage() {
                     onChange={(e) => setCrmCustomerId(e.target.value)}
                   >
                     <option value="">اختر العميل...</option>
+                    {crmCustomerId && !customers.some(c => c.id === crmCustomerId) && (
+                      <option value={crmCustomerId}>العميل المحدد سابقاً</option>
+                    )}
                     {customers.map((c) => (
                       <option key={c.id} value={c.id}>{c.full_name}</option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-gray-500">للوصول إلى عميل آخر، استخدم البحث أو صفحات العملاء.</p>
                 </div>
 
                 {/* Subject */}
@@ -890,6 +901,14 @@ export default function CustomersPage() {
         </div>
       )}
 
+      <nav aria-label="صفحات العملاء" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white p-4 text-sm">
+        <span aria-live="polite" className="text-gray-600">الصفحة {page} — {loading ? "جاري التحميل..." : `${customers.length} عميل`}</span>
+        <div className="flex gap-2">
+          <button onClick={() => setPage(current => current - 1)} disabled={loading || page === 1} className="rounded-lg border px-4 py-2 disabled:opacity-40">السابق</button>
+          <button onClick={() => setPage(current => current + 1)} disabled={loading || !hasNextPage || !!loadError} className="rounded-lg border px-4 py-2 disabled:opacity-40">التالي</button>
+        </div>
+      </nav>
+
       <CustomerModal 
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -908,7 +927,7 @@ export default function CustomersPage() {
             handleEdit(selectedProfileCustomer);
           }}
           onDelete={() => {
-            setCustomers(prev => prev.filter(c => c.id !== selectedProfileCustomer.id));
+            fetchCustomers();
             setSelectedProfileCustomer(null);
           }}
         />
