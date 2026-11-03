@@ -6,6 +6,7 @@ import { ArrowRight, Calendar, Download, Home } from 'lucide-react';
 import RoleGate from '@/components/auth/RoleGate';
 import { supabase } from '@/lib/supabase';
 import { useActiveHotel } from '@/hooks/useActiveHotel';
+import UpdatesReportPrintFrame from '@/components/reports/UpdatesReportPrintFrame';
 
 type UnitStatusKind = 'booked' | 'future' | 'temporary' | 'available' | 'maintenance' | 'cleaning' | 'overdue';
 
@@ -338,53 +339,7 @@ export default function UpdatesReportPage() {
   return (
     <RoleGate allow={['admin', 'manager', 'accountant', 'marketing']}>
     <>
-        <style>{`
-          .screen-only { display: block; }
-          .print-only { display: none; }
-          @media print {
-            @page { size: A4 landscape; margin: 10mm; }
-            .screen-only { display: none !important; }
-            .print-only { display: block !important; }
-            header, aside, nav, .sticky, .fixed { display: none !important; }
-            .print-title { font-size: 16px; font-weight: 900; color: #111827; margin-bottom: 6px; }
-            .print-sub { color: #6b7280; font-size: 11px; margin-bottom: 8px; }
-            .p-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
-            .p-filters { font-size: 10px; color: #374151; }
-            .p-legend { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: #111827; }
-            .p-leg { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid #e5e7eb; border-radius: 999px; background: #fff; }
-            .p-dot { width: 10px; height: 10px; border-radius: 999px; }
-            .p-dot-overdue { background: #92400e; }
-            .p-dot-booked { background: #ef4444; }
-            .p-dot-future { background: #fde047; }
-            .p-dot-temp { background: #f59e0b; }
-            .p-dot-avail { background: #22c55e; }
-            .p-dot-clean { background: #86efac; }
-            .p-dot-maint { background: #9ca3af; }
-            .p-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 5px; }
-            .p-card { border: 0; border-radius: 10px; padding: 6px; break-inside: avoid; min-height: 52px; }
-            .p-card-overdue { background: #92400e; color: #fff; }
-            .p-card-booked { background: #ef4444; color: #fff; }
-            .p-card-future { background: #fde047; color: #111827; }
-            .p-card-temp { background: #f59e0b; color: #111827; }
-            .p-card-available { background: #22c55e; color: #fff; }
-            .p-card-cleaning { background: #bbf7d0; color: #111827; }
-            .p-card-maint { background: #6b7280; color: #fff; }
-            .p-row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
-            .p-unit { font-size: 18px; font-weight: 900; letter-spacing: 0.2px; }
-            .p-out { font-size: 7px; font-weight: 800; opacity: 0.95; white-space: nowrap; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
-            .p-out-label { font-size: 6px; font-weight: 800; opacity: 0.9; }
-            .p-out-date { font-size: 7px; font-weight: 900; letter-spacing: 0.1px; }
-            .p-type-line { margin-top: 2px; font-size: 8px; opacity: 0.95; white-space: normal; word-break: break-word; line-height: 1.2; }
-            .p-flags { margin-top: 3px; font-size: 8px; color: #111827; display: flex; gap: 4px; flex-wrap: wrap; }
-            .p-flags { color: inherit; }
-            .p-flag { padding: 0 4px; border-radius: 999px; border: 0; background: rgba(255,255,255,0.3); font-size: 7px; line-height: 1.3; }
-            .p-note { margin-top: 3px; font-size: 7px; color: inherit; opacity: 0.95; }
-            .p-summary { margin-top: 10px; }
-            .p-summary-title { font-size: 11px; font-weight: 900; color: #111827; margin-bottom: 6px; }
-            .p-summary-lines { display: flex; flex-wrap: wrap; gap: 6px; }
-            .p-summary-line { padding: 4px 8px; border-radius: 999px; background: #111827; color: #fff; font-size: 10px; font-weight: 800; }
-          }
-        `}</style>
+
 
         <div className="p-6 max-w-7xl mx-auto space-y-6 screen-only">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -586,8 +541,8 @@ export default function UpdatesReportPage() {
           </div>
         </div>
 
-        <div className="print-only">
-          <div className="print-title">تقرير التحديثيات</div>
+        <UpdatesReportPrintFrame date={todayStr}>
+
           <div className="p-head">
             <div className="p-filters">
               <div>الفندق: {selectedHotelName}</div>
@@ -649,7 +604,7 @@ export default function UpdatesReportPage() {
               ))}
             </div>
           </div>
-        </div>
+        </UpdatesReportPrintFrame>
       </>
     </RoleGate>
   );

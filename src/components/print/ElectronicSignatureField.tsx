@@ -3,13 +3,16 @@
 import React from 'react';
 import { PenLine, X } from 'lucide-react';
 import SignaturePad from '@/components/SignaturePad';
+import { createPortal } from 'react-dom';
 
 export default function ElectronicSignatureField({
   label,
-  secondaryLabel
+  secondaryLabel,
+  portalPad = false
 }: {
   label: string;
   secondaryLabel?: string;
+  portalPad?: boolean;
 }) {
   const [showPad, setShowPad] = React.useState(false);
   const [signature, setSignature] = React.useState<string | null>(null);
@@ -52,7 +55,9 @@ export default function ElectronicSignatureField({
         )}
       </div>
 
-      {showPad && (
+      {showPad && (portalPad ? createPortal(<div className="fixed inset-0" style={{ zIndex: 200 }} data-receipt-signature>
+        <SignaturePad documentLabel="السند" onSave={(dataUrl) => { setSignature(dataUrl); setShowPad(false); }} onCancel={() => setShowPad(false)} />
+      </div>, document.body) : (
         <SignaturePad
           onSave={(dataUrl) => {
             setSignature(dataUrl);
@@ -60,7 +65,7 @@ export default function ElectronicSignatureField({
           }}
           onCancel={() => setShowPad(false)}
         />
-      )}
+      ))}
     </div>
   );
 }

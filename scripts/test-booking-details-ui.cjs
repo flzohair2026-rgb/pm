@@ -5,7 +5,18 @@ const ts = require('typescript');
 const { createHash } = require('node:crypto');
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const baseline = JSON.parse(fs.readFileSync('scripts/fixtures/booking-details-ui-behavior.json', 'utf8'));
-const source = ts.createSourceFile('BookingDetails.tsx', fs.readFileSync('src/components/bookings/BookingDetails.tsx', 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+// Direct receipt/contract printing intentionally replaces these print handlers
+// and adds dialog state. Keep the frozen checks for every other action.
+const currentSource = fs.readFileSync('src/components/bookings/BookingDetails.tsx', 'utf8');
+assert.ok(currentSource.includes('onClick={() => setReceiptPrintId(paymentId)}'));
+const baselineSource = currentSource
+  .replace('  const [contractPrintOpen, setContractPrintOpen] = useState(false);', '')
+  .replace(/\s*\{contractPrintOpen && <ContractPrintDialog[^\n]+\n/, '\n')
+  .replaceAll('onClick={() => setContractPrintOpen(true)}', "onClick={() => openPrintPreview('طباعة العقد', `/print/contract/${booking.id}?embed=1`)}")
+  .replace('  const [receiptPrintId, setReceiptPrintId] = useState<string | null>(null);', '')
+  .replace(/\s*\{receiptPrintId && <ReceiptPrintDialog[^\n]+\n/, '\n')
+  .replace('onClick={() => setReceiptPrintId(paymentId)}', "onClick={() => openPrintPreview('طباعة سند القبض', `/print/receipt/${paymentId}?embed=1`)}");
+const source = ts.createSourceFile('BookingDetails.tsx', baselineSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const printer = ts.createPrinter({ removeComments: true });
 const print = node => printer.printNode(ts.EmitHint.Unspecified, node, source);
 const main = source.statements.find(s => ts.isFunctionDeclaration(s) && s.name?.text === 'BookingDetails');

@@ -18,6 +18,10 @@ import { createInvoiceFinancialsLookup } from '@/lib/bookings/invoice-financials
 import BookingHelpHint from './BookingHelpHint';
 import BookingOverviewStrip from './BookingOverviewStrip';
 import styles from './BookingDetails.module.css';
+import dynamic from 'next/dynamic';
+
+const ContractPrintDialog = dynamic(() => import('@/components/print/ContractPrintDialog'), { ssr: false });
+const ReceiptPrintDialog = dynamic(() => import('@/components/print/ReceiptPrintDialog'), { ssr: false });
 
 interface BookingDetailsProps {
   booking: any;
@@ -29,6 +33,8 @@ interface BookingDetailsProps {
 
 export default function BookingDetails({ booking, transactions: initialTransactions, paymentMethods, invoices: initialInvoices, paymentJournalMap = {} }: BookingDetailsProps) {
   const router = useRouter();
+  const [contractPrintOpen, setContractPrintOpen] = useState(false);
+  const [receiptPrintId, setReceiptPrintId] = useState<string | null>(null);
   const { role } = useUserRole();
   const isAdmin = role === 'admin';
   const isAccountant = role === 'accountant';
@@ -3664,6 +3670,8 @@ if (activeInvoice && activeInvoice.status === 'draft') {
 
   return (
     <div className={`${styles.page} space-y-5`}>
+      {contractPrintOpen && <ContractPrintDialog bookingId={booking.id} onClose={() => setContractPrintOpen(false)} />}
+      {receiptPrintId && <ReceiptPrintDialog key={receiptPrintId} paymentId={receiptPrintId} onClose={() => setReceiptPrintId(null)} />}
       {showHelpModal && (
         <div className="fixed inset-0 z-[60]">
           <div className="absolute inset-0 bg-black/40" onClick={() => setShowHelpModal(false)} />
@@ -4541,7 +4549,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         <button
                           type="button"
                           className="w-full text-right px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 active:bg-gray-100"
-                          onClick={() => openPrintPreview('طباعة العقد', `/print/contract/${booking.id}?embed=1`)}
+                          onClick={() => setContractPrintOpen(true)}
                         >
                           طباعة العقد
                         </button>
@@ -4571,7 +4579,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                         <button
                           type="button"
                           className="w-full text-right px-4 py-3 text-sm font-bold text-gray-900 hover:bg-gray-50"
-                          onClick={() => openPrintPreview('طباعة العقد', `/print/contract/${booking.id}?embed=1`)}
+                          onClick={() => setContractPrintOpen(true)}
                         >
                           طباعة العقد
                         </button>
@@ -6448,7 +6456,7 @@ if (activeInvoice && activeInvoice.status === 'draft') {
                                   <>
                                     <button
                                       type="button"
-                                      onClick={() => openPrintPreview('طباعة سند القبض', `/print/receipt/${paymentId}?embed=1`)}
+                                      onClick={() => setReceiptPrintId(paymentId)}
                                       className="inline-flex items-center p-1.5 text-emerald-900 hover:text-emerald-950 hover:bg-emerald-100 rounded-xl transition-colors ring-1 ring-emerald-200/70 bg-white/60"
                                       title="طباعة سند القبض"
                                     >

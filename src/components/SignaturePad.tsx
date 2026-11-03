@@ -6,9 +6,10 @@ import { X, Check, Eraser, PenLine } from 'lucide-react';
 interface SignaturePadProps {
   onSave: (dataUrl: string) => void;
   onCancel: () => void;
+  documentLabel?: string;
 }
 
-export default function SignaturePad({ onSave, onCancel }: SignaturePadProps) {
+export default function SignaturePad({ onSave, onCancel, documentLabel = 'العقد' }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
@@ -131,7 +132,7 @@ export default function SignaturePad({ onSave, onCancel }: SignaturePadProps) {
           </div>
           
           <p className="text-[11px] text-gray-500 mt-3 text-center">
-            بإتمام التوقيع، أنت توافق على إدراج هذا التوقيع في العقد بشكل رسمي.
+            بإتمام التوقيع، أنت توافق على إدراج هذا التوقيع في {documentLabel} بشكل رسمي.
           </p>
         </div>
 
